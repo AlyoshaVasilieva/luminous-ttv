@@ -9,8 +9,8 @@ display any ads.
 ### How it works
 
 The server makes use of the [Hola](https://en.wikipedia.org/wiki/Hola_(VPN))
-proxy network to connect to Twitch via Russia. Twitch does not currently
-serve any livestream ads to users in Russia.
+proxy network to retrieve a Twitch video's playlist via Russia. Twitch does
+not currently serve any livestream ads to users in Russia.
 
 * This server doesn't use your actual Twitch ID, it generates its own.
 * You will not be acting as a peer of the Hola network.
