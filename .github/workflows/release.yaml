@@ -141,24 +141,22 @@ jobs:
           command: run
           use-cross: ${{ matrix.cross }}
           args: --release --target=${{ matrix.target }} -- -V
-      - name: Create Archive
+      - name: Move Binary
+        id: mv
+        run: mv "target/$TARGET/release/${{ matrix.binName }}" .
+      - name: Zip Files
+        uses: vimtor/action-zip@v1
         id: archive
-        shell: bash
-        env:
-          TARGET: ${{ matrix.target }}
-          TAG: ${{ needs.release.outputs.version }}
-        run: |
-          filename="luminous-ttv-$TAG-$TARGET.zip"
-          mv "target/$TARGET/release/${{ matrix.binName }}" .
-          zip -9 "$filename" README.md LICENSE-GPL.txt LICENSE-MIT.txt "${{ matrix.binName }}"
-          echo "::set-output name=filename::$filename"
+        with:
+          files: README.md LICENSE-GPL.txt LICENSE-MIT.txt ${{ matrix.binName }}
+          dest: luminous-ttv-${{ needs.release.outputs.version }}-${{ matrix.target }}.zip
       - name: Upload Archive
         uses: ncipollo/release-action@v1.8.8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
           artifactErrorsFailBuild: true
-          artifacts: ${{ steps.archive.outputs.filename }}
+          artifacts: luminous-ttv-${{ needs.release.outputs.version }}-${{ matrix.target }}.zip
           artifactContentType: application/zip
           omitBodyDuringUpdate: true
           omitNameDuringUpdate: true
