@@ -143,7 +143,7 @@ jobs:
           args: --release --target=${{ matrix.target }} -- -V
       - name: Move Binary
         id: mv
-        run: mv "target/$TARGET/release/${{ matrix.binName }}" .
+        run: mv "target/${{ matrix.target }}/release/${{ matrix.binName }}" .
       - name: Zip Files
         uses: vimtor/action-zip@v1
         id: archive
