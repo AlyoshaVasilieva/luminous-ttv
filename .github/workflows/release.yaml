@@ -1,4 +1,6 @@
-# taken from https://github.com/cargo-generate/cargo-generate/blob/master/.github/workflows/release.yml and modified
+# taken from https://github.com/cargo-generate/cargo-generate/blob/master/.github/workflows/release.yml and
+# https://github.com/cargo-generate/cargo-generate/blob/master/.github/workflows/release-binary-assets.yml and
+# modified
 
 ## references:
 # cache: https://github.com/actions/cache/blob/main/examples.md#rust---cargo
@@ -22,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: [ 'macos-latest', 'ubuntu-latest', 'windows-latest']
+        version: [ 'macos-latest', 'ubuntu-latest', 'windows-latest' ]
     runs-on: ${{ matrix.version }}
     steps:
       - uses: actions/checkout@v2
@@ -42,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: [ 'macos-latest', 'ubuntu-latest', 'windows-latest']
+        version: [ 'macos-latest', 'ubuntu-latest', 'windows-latest' ]
         cargo-cmd:
           - fmt --all -- --check
           - clippy --all-targets --all-features -- -D warnings
@@ -64,6 +66,8 @@ jobs:
     needs: lint
     runs-on: ubuntu-latest
     environment: release
+    outputs:
+      version: ${{ steps.tag_name.outputs.current_version }}
     steps:
       - uses: actions/checkout@v2
       - name: setup | rust
@@ -87,3 +91,75 @@ jobs:
           # See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
           tag_name: ${{ github.ref }}
           release_name: Release ${{ steps.tag_name.outputs.current_version }}
+
+  rba:
+    name: release binary assets
+    needs: release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+            binName: luminous-ttv
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+            binName: luminous-ttv
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+            binName: luminous-ttv
+          - target: i686-pc-windows-msvc
+            os: windows-latest
+            cross: false
+            binName: luminous-ttv.exe
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+            binName: luminous-ttv.exe
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+      - uses: Swatinem/rust-cache@v1
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          use-cross: ${{ matrix.cross }}
+          args: --release --target=${{ matrix.target }}
+      - name: Smoke Test
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          use-cross: ${{ matrix.cross }}
+          args: --release --target=${{ matrix.target }} -- -V
+      - name: Create Archive
+        id: archive
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ needs.release.outputs.version }}
+        run: |
+          filename="luminous-ttv-$TAG-$TARGET.zip"
+          mv "target/$TARGET/release/${{ matrix.binName }}" .
+          zip -9 "$filename" README.md LICENSE-GPL.txt LICENSE-MIT.txt "${{ matrix.binName }}"
+          echo "::set-output name=filename::$filename"
+      - name: Upload Archive
+        uses: ncipollo/release-action@v1.8.8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          allowUpdates: true
+          artifactErrorsFailBuild: true
+          artifacts: ${{ steps.archive.outputs.filename }}
+          artifactContentType: application/zip
+          omitBodyDuringUpdate: true
+          omitNameDuringUpdate: true
+          omitPrereleaseDuringUpdate: true
