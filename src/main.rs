@@ -6,7 +6,7 @@ use reqwest::{Client, ClientBuilder, Proxy};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tide::security::{CorsMiddleware, Origin};
-use tide::{log, Request, Response, Status, StatusCode};
+use tide::{log, Request, Response, Result, Status, StatusCode};
 use url::{form_urlencoded::Parse, Url};
 use uuid::Uuid;
 
@@ -56,7 +56,7 @@ struct Config {
 }
 
 #[async_std::main]
-async fn main() -> tide::Result<()> {
+async fn main() -> Result<()> {
     let crate_name = clap::crate_name!();
     let opts = Opts::parse();
     log::with_level(if opts.debug { log::LevelFilter::Debug } else { log::LevelFilter::Info });
@@ -65,9 +65,7 @@ async fn main() -> tide::Result<()> {
     if let Some(proxy) = opts.proxy {
         cb = cb.proxy(Proxy::all(proxy)?);
     } else {
-        let uuid = if !opts.regen_creds { config.uuid } else { None };
-        let (bg, uuid) = hello::background_init(uuid).await?;
-        config.uuid = Some(uuid);
+        cb = setup_hola(&mut config, &opts, cb).await?;
         if !opts.discard_creds {
             log::info!(
                 "Saving Hola credentials to {}",
@@ -75,27 +73,6 @@ async fn main() -> tide::Result<()> {
             );
             confy::store(crate_name, None, &config)?;
         }
-        if bg.blocked.unwrap_or_default() || bg.permanent.unwrap_or_default() {
-            panic!("Blocked by Hola: {:?}", bg);
-        }
-        let proxy_type = ProxyType::Direct;
-        let tunnels = hello::get_tunnels(&uuid, bg.key, "ru", proxy_type, 3).await?;
-        log::debug!("{:#?}", tunnels);
-        let login = hello::uuid_to_login(&uuid);
-        let password = tunnels.agent_key;
-        log::debug!("login: {}", login);
-        log::debug!("password: {}", password);
-        let (hostname, ip) = tunnels
-            .ip_list
-            .choose(&mut common::get_rng())
-            .expect("no tunnels found in hola response");
-        let port = proxy_type.get_port(&tunnels.port);
-        let proxy = if !hostname.is_empty() {
-            format!("https://{}:{}", hostname, port)
-        } else {
-            format!("http://{}:{}", ip, port)
-        }; // does this check actually need to exist?
-        cb = cb.proxy(Proxy::all(proxy)?.basic_auth(&login, &password));
     };
     let client = cb.build().expect("client");
     CLIENT.set(client).unwrap();
@@ -107,19 +84,46 @@ async fn main() -> tide::Result<()> {
     Ok(())
 }
 
-async fn process_live(req: Request<()>) -> tide::Result<Response> {
+/// Connect to Hola, retrieve tunnels, set the ClientBuilder to use one of the proxies. Updates
+/// stored UUID in the config if we regenerated our creds.
+async fn setup_hola(config: &mut Config, opts: &Opts, cb: ClientBuilder) -> Result<ClientBuilder> {
+    let uuid = if !opts.regen_creds { config.uuid } else { None };
+    let (bg, uuid) = hello::background_init(uuid).await?;
+    config.uuid = Some(uuid);
+    if bg.blocked.unwrap_or_default() || bg.permanent.unwrap_or_default() {
+        panic!("Blocked by Hola: {:?}", bg);
+    }
+    let proxy_type = ProxyType::Direct;
+    let tunnels = hello::get_tunnels(&uuid, bg.key, "ru", proxy_type, 3).await?;
+    log::debug!("{:#?}", tunnels);
+    let login = hello::uuid_to_login(&uuid);
+    let password = tunnels.agent_key;
+    log::debug!("login: {}", login);
+    log::debug!("password: {}", password);
+    let (hostname, ip) =
+        tunnels.ip_list.choose(&mut common::get_rng()).expect("no tunnels found in hola response");
+    let port = proxy_type.get_port(&tunnels.port);
+    let proxy = if !hostname.is_empty() {
+        format!("https://{}:{}", hostname, port)
+    } else {
+        format!("http://{}:{}", ip, port)
+    }; // does this check actually need to exist?
+    Ok(cb.proxy(Proxy::all(proxy)?.basic_auth(&login, &password)))
+}
+
+async fn process_live(req: Request<()>) -> Result<Response> {
     let id = req.param(ID_PARAM).unwrap();
     let sid = StreamID::Live(id.to_lowercase());
     process(sid, req.url().query_pairs()).await
 }
 
-async fn process_vod(req: Request<()>) -> tide::Result<Response> {
+async fn process_vod(req: Request<()>) -> Result<Response> {
     let id = req.param(ID_PARAM).unwrap();
     let sid = StreamID::VOD(id.to_string());
     process(sid, req.url().query_pairs()).await
 }
 
-async fn process(sid: StreamID, query: Parse<'_>) -> tide::Result<Response> {
+async fn process(sid: StreamID, query: Parse<'_>) -> Result<Response> {
     let token = get_token(&sid).await?;
     let m3u8 = get_m3u8(&sid.get_url(), token.data.playback_access_token, query).await?;
     Ok(Response::builder(StatusCode::Ok)
@@ -128,7 +132,7 @@ async fn process(sid: StreamID, query: Parse<'_>) -> tide::Result<Response> {
         .build())
 }
 
-async fn get_m3u8(url: &str, token: PlaybackAccessToken, query: Parse<'_>) -> tide::Result<String> {
+async fn get_m3u8(url: &str, token: PlaybackAccessToken, query: Parse<'_>) -> Result<String> {
     const PERMITTED_INCOMING_KEYS: [&str; 9] = [
         "player_backend",             // mediaplayer
         "playlist_include_framerate", // true
@@ -163,7 +167,7 @@ async fn get_m3u8(url: &str, token: PlaybackAccessToken, query: Parse<'_>) -> ti
 }
 
 /// Get an access token for the given stream.
-async fn get_token(sid: &StreamID) -> tide::Result<AccessTokenResponse> {
+async fn get_token(sid: &StreamID) -> Result<AccessTokenResponse> {
     let request = json!({
         "operationName": "PlaybackAccessToken",
         "extensions": {

@@ -37,7 +37,7 @@ requests get routed.
 * Loading streams takes longer, up to around 10 seconds. (This doesn't affect
   the latency.)
 * In Firefox, and browsers built using its code, the extension's error fallback code 
-  can't be used. If this program isn't running, you won't be able to view any streams
+  can't be used. If this program isn't running you won't be able to view any streams
   on Twitch. (In Chrome-like browsers, the extension will fall back to the
   ad-filled stream when anything goes wrong.)
 
