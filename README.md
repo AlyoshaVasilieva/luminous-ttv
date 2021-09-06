@@ -15,19 +15,19 @@ not currently serve any livestream ads to users in Russia.
 * This server doesn't use your actual Twitch ID, it generates its own.
 * You will not be acting as a peer of the Hola network.
 
-### Building
+### Setup
 
-As an alternative to building, you can [download pre-built releases][release].
-Just unzip it anywhere and run `luminous-ttv`
+1. [Download a pre-built releases][release].
+2. Unzip it anywhere and run `luminous-ttv`
 
 You'll also need to add [the browser extension][ext] to your browser so that
 requests get routed.
 
----
+### Building
 
 1. [Install Rust](https://rustup.rs/).
 2. Run `cargo install --locked --git https://github.com/AlyoshaVasilieva/luminous-ttv.git`
-3. Run `luminous-ttv`
+   to install, or clone the repository and run `cargo build --release`
 
 [ext]: https://github.com/AlyoshaVasilieva/luminous-ttv-ext
 [release]: https://github.com/AlyoshaVasilieva/luminous-ttv/releases/latest
