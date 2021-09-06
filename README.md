@@ -17,7 +17,7 @@ not currently serve any livestream ads to users in Russia.
 
 ### Setup
 
-1. [Download a pre-built releases][release].
+1. [Download a pre-built release][release].
 2. Unzip it anywhere and run `luminous-ttv`
 
 You'll also need to add [the browser extension][ext] to your browser so that
