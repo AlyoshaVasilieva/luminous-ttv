@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
     let mut config: Config = confy::load(crate_name, None)?;
     let mut cb = ClientBuilder::new().user_agent(common::USER_AGENT);
     if let Some(proxy) = opts.proxy {
+        // TODO: Parse M3U enough to show user-country
         cb = cb.proxy(Proxy::all(proxy)?);
     } else {
         cb = setup_hola(&mut config, &opts, cb).await?;
@@ -95,7 +96,7 @@ async fn setup_hola(config: &mut Config, opts: &Opts, cb: ClientBuilder) -> Resu
     }
     let proxy_type = ProxyType::Direct;
     let tunnels = hello::get_tunnels(&uuid, bg.key, "ru", proxy_type, 3).await?;
-    log::debug!("{:#?}", tunnels);
+    log::debug!("{:?}", tunnels);
     let login = hello::uuid_to_login(&uuid);
     let password = tunnels.agent_key;
     log::debug!("login: {}", login);
