@@ -1,12 +1,14 @@
+use std::time::Duration;
+
 use clap::{AppSettings, Clap};
 use extend::ext;
 use once_cell::sync::OnceCell;
 use rand::{distributions::Alphanumeric, seq::SliceRandom, Rng};
-use reqwest::{Client, ClientBuilder, Proxy};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tide::security::{CorsMiddleware, Origin};
 use tide::{log, Request, Response, Result, Status, StatusCode};
+use ureq::{Agent, AgentBuilder, Proxy};
 use url::{form_urlencoded::Parse, Url};
 use uuid::Uuid;
 
@@ -22,10 +24,8 @@ const ID_PARAM: &str = "id";
 const VOD_ENDPOINT: &str = const_format::concatcp!("/vod/:", ID_PARAM);
 const LIVE_ENDPOINT: &str = const_format::concatcp!("/live/:", ID_PARAM);
 
-static CLIENT: OnceCell<Client> = OnceCell::new();
-// Why reqwest instead of an async-std option? Because we want support for HTTPS proxies. isahc
-// only has that on non-Windows platforms*, surf doesn't have it at all.
-// * curl has it for OpenSSL but I couldn't figure out how to get isahc to use OpenSSL on Windows.
+static AGENT: OnceCell<Agent> = OnceCell::new();
+// using ureq because it supports a wide variety of proxies, unlike surf
 
 #[derive(Clap)]
 #[clap(version, about)]
@@ -34,9 +34,9 @@ struct Opts {
     /// Port for this server to listen on.
     #[clap(short, long, default_value = "9595")]
     server_port: u16,
-    /// Custom proxy to use, instead of Hola. Takes the form of 'scheme://host:port', where scheme
-    /// is one of: http/https/socks/socks4a/socks5/socks5h. Must be in Russia or another country
-    /// where Twitch doesn't serve ads for this system to work.
+    /// Custom proxy to use, instead of Hola. Takes the form of 'scheme://user:password@host:port',
+    /// where scheme is one of: http/https/socks4/socks4a/socks5.
+    /// Must be in a country where Twitch doesn't serve ads for this system to work.
     #[clap(short, long)]
     proxy: Option<String>,
     /// Don't save Hola credentials.
@@ -61,12 +61,12 @@ async fn main() -> Result<()> {
     let opts = Opts::parse();
     log::with_level(if opts.debug { log::LevelFilter::Debug } else { log::LevelFilter::Info });
     let mut config: Config = confy::load(crate_name, None)?;
-    let mut cb = ClientBuilder::new().user_agent(common::USER_AGENT);
+    let mut ab =
+        AgentBuilder::new().user_agent(common::USER_AGENT).timeout(Duration::from_secs(20));
     if let Some(proxy) = opts.proxy {
-        // TODO: Parse M3U enough to show user-country
-        cb = cb.proxy(Proxy::all(proxy)?);
+        ab = ab.proxy(Proxy::new(proxy)?);
     } else {
-        cb = setup_hola(&mut config, &opts, cb).await?;
+        ab = setup_hola(&mut config, &opts, ab).await?;
         if !opts.discard_creds {
             log::info!(
                 "Saving Hola credentials to {}",
@@ -75,8 +75,8 @@ async fn main() -> Result<()> {
             confy::store(crate_name, None, &config)?;
         }
     };
-    let client = cb.build().expect("client");
-    CLIENT.set(client).unwrap();
+    let agent = ab.build();
+    AGENT.set(agent).unwrap();
     let mut app = tide::new();
     app.at(VOD_ENDPOINT).get(process_vod);
     app.at(LIVE_ENDPOINT).get(process_live);
@@ -85,17 +85,17 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Connect to Hola, retrieve tunnels, set the ClientBuilder to use one of the proxies. Updates
+/// Connect to Hola, retrieve tunnels, set the AgentBuilder to use one of the proxies. Updates
 /// stored UUID in the config if we regenerated our creds.
-async fn setup_hola(config: &mut Config, opts: &Opts, cb: ClientBuilder) -> Result<ClientBuilder> {
+async fn setup_hola(config: &mut Config, opts: &Opts, ab: AgentBuilder) -> Result<AgentBuilder> {
     let uuid = if !opts.regen_creds { config.uuid } else { None };
-    let (bg, uuid) = hello::background_init(uuid).await?;
+    let (bg, uuid) = hello::background_init(uuid)?;
     config.uuid = Some(uuid);
     if bg.blocked.unwrap_or_default() || bg.permanent.unwrap_or_default() {
         panic!("Blocked by Hola: {:?}", bg);
     }
     let proxy_type = ProxyType::Direct;
-    let tunnels = hello::get_tunnels(&uuid, bg.key, "ru", proxy_type, 3).await?;
+    let tunnels = hello::get_tunnels(&uuid, bg.key, "ru", proxy_type, 3)?;
     log::debug!("{:?}", tunnels);
     let login = hello::uuid_to_login(&uuid);
     let password = tunnels.agent_key;
@@ -105,11 +105,12 @@ async fn setup_hola(config: &mut Config, opts: &Opts, cb: ClientBuilder) -> Resu
         tunnels.ip_list.choose(&mut common::get_rng()).expect("no tunnels found in hola response");
     let port = proxy_type.get_port(&tunnels.port);
     let proxy = if !hostname.is_empty() {
-        format!("https://{}:{}", hostname, port)
+        // https://github.com/algesten/ureq/issues/420
+        format!("http://{}:{}@{}:{}", login, password, hostname, port)
     } else {
-        format!("http://{}:{}", ip, port)
+        format!("http://{}:{}@{}:{}", login, password, ip, port)
     }; // does this check actually need to exist?
-    Ok(cb.proxy(Proxy::all(proxy)?.basic_auth(&login, &password)))
+    Ok(ab.proxy(Proxy::new(proxy)?))
 }
 
 async fn process_live(req: Request<()>) -> Result<Response> {
@@ -155,16 +156,17 @@ async fn get_m3u8(url: &str, token: PlaybackAccessToken, query: Parse<'_>) -> Re
         .append_pair("play_session_id", &generate_id().into_ascii_lowercase())
         .append_pair("token", &token.value)
         .append_pair("sig", &token.signature);
-    Ok(CLIENT
-        .get()
-        .unwrap()
-        .get(url.as_str())
-        .send()
-        .await?
-        .error_for_status()
-        .into_tide()?
-        .text()
-        .await?)
+    let m3u = async_std::task::spawn_blocking::<_, Result<_>>(move || {
+        Ok(AGENT.get().unwrap().get(url.as_str()).call().into_tide()?.into_string()?)
+    })
+    .await?;
+
+    const UC_START: &str = "USER-COUNTRY=\"";
+    if let Some(country) = m3u.lines().find_map(|line| line.substring_between(UC_START, "\"")) {
+        log::info!("Twitch states that the proxy is in {}", country);
+    }
+
+    Ok(m3u)
 }
 
 /// Get an access token for the given stream.
@@ -185,32 +187,29 @@ async fn get_token(sid: &StreamID) -> Result<AccessTokenResponse> {
             "playerType": "site", // "embed" may also be valid
         },
     });
-    Ok(CLIENT
-        .get()
-        .unwrap()
-        .post("https://gql.twitch.tv/gql")
-        .header("Client-ID", TWITCH_CLIENT)
-        .header("Device-ID", &generate_id())
-        .json(&request)
-        .send()
-        .await?
-        .error_for_status()
-        .into_tide()?
-        .json()
-        .await?)
+    // XXX: I've seen a different method of doing this that involves X-Device-Id (frontpage only?)
+    async_std::task::spawn_blocking(|| {
+        Ok(AGENT
+            .get()
+            .unwrap()
+            .post("https://gql.twitch.tv/gql")
+            .set("Client-ID", TWITCH_CLIENT)
+            .set("Device-ID", &generate_id())
+            .send_json(request)
+            .into_tide()?
+            .into_json()?)
+    })
+    .await
 }
 
 #[ext]
-impl<R> reqwest::Result<R> {
-    /// Attach a status code to a Reqwest response if it is an error. This lets Tide send
-    /// a 404 if Reqwest got a 404, instead of 404 becoming 500.
+impl<R> std::result::Result<R, ureq::Error> {
+    /// Attach a status code to a ureq response if it is an error. This lets Tide send
+    /// a 404 if ureq got a 404, instead of 404 becoming 500.
     fn into_tide(self) -> tide::Result<R> {
         match self {
             Ok(r) => Ok(r),
-            Err(ref e) if e.status().is_some() => {
-                let stat = e.status().as_ref().unwrap().as_u16();
-                self.with_status(|| stat)
-            }
+            Err(ureq::Error::Status(code, _)) => self.status(code),
             Err(e) => Err(e.into()),
         }
     }
@@ -222,6 +221,16 @@ impl String {
     fn into_ascii_lowercase(mut self) -> String {
         self.make_ascii_lowercase();
         self
+    }
+}
+
+#[ext]
+impl str {
+    fn substring_between(&self, start: &str, end: &str) -> Option<&str> {
+        let start_idx = self.find(start)?;
+        let s = &self[start_idx + start.len()..];
+        let end_idx = s.find(end)?;
+        Some(&s[..end_idx])
     }
 }
 
@@ -252,8 +261,6 @@ pub(crate) struct Data {
 pub(crate) struct PlaybackAccessToken {
     pub(crate) value: String,
     pub(crate) signature: String,
-    #[serde(rename = "__typename")]
-    pub(crate) typename: String,
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -276,5 +283,16 @@ impl StreamID {
         match self {
             Self::Live(d) | Self::VOD(d) => d.as_str(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::strExt;
+
+    #[test]
+    fn substring() {
+        let input = r#"se",USER-COUNTRY="RU",MANI"#;
+        assert_eq!(input.substring_between("USER-COUNTRY=\"", "\""), Some("RU"));
     }
 }

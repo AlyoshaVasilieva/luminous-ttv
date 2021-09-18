@@ -8,12 +8,18 @@ display any ads.
 
 ### How it works
 
-The server makes use of the [Hola](https://en.wikipedia.org/wiki/Hola_(VPN))
-proxy network to retrieve a Twitch video's playlist via Russia. Twitch does
-not currently serve any livestream ads to users in Russia.
+1. Server connects to the [Hola] network and gets a Russian proxy
+2. Extension redirects video playlist requests to server
+3. Server requests a playlist access token, and then the playlist,
+   using the Russian proxy.
+
+Twitch does not currently serve any livestream ads to users in Russia,
+so this results in an ad-free viewing experience. (Use uBlock Origin, too.)
 
 * This server doesn't use your actual Twitch ID, it generates its own.
 * You will not be acting as a peer of the Hola network.
+
+[hola]: https://en.wikipedia.org/wiki/Hola_(VPN)
 
 ### Setup
 
@@ -44,13 +50,34 @@ requests get routed.
 ### Possible issues
 
 1. Hola might ban you, which will make this stop working unless you have
-   your own Russian proxy to use.
-2. Hola might stop running servers in Russia.
-3. Twitch might start serving ads to users in Russia.
+   your own proxy to use.
+2. Hola might stop running servers in Russia; same effect as above.
+3. Twitch might start serving ads to users in Russia (or everywhere).
 4. This will cause you to load the video from Europe (Sweden for me) which may
    cause buffering issues if your internet isn't that good and that's far away.
    It doesn't cause an issue for me beyond maybe 1 second of additional latency
    due to repeatedly crossing an ocean.
+
+### Alternate proxies
+
+This program also supports using custom proxies using the `--proxy` option.
+Proxies must be located in a country where Twitch does not serve ads.
+
+Countries where Twitch does not serve ads, according to brief testing (Sep 2021):
+
+* Afghanistan
+* China (GFW blocks Twitch and this program does not attempt to evade it)
+* Iran
+* Iraq
+* Israel
+* Palestine
+* Russia
+* Saudi Arabia
+* Syria
+* Turkey
+* United Arab Emirates
+
+This list likely varies over time.
 
 ### License
 

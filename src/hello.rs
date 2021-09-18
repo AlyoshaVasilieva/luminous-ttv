@@ -31,8 +31,8 @@ use anyhow::{anyhow, Result};
 use const_format::concatcp;
 use once_cell::sync::Lazy;
 use rand::Rng;
-use reqwest::{Client, ClientBuilder};
 use serde::{Deserialize, Serialize};
+use ureq::{Agent, AgentBuilder};
 use url::Url;
 use uuid::Uuid;
 
@@ -45,6 +45,7 @@ const CCGI_URL: &str = "https://client.hola.org/client_cgi/";
 const BG_INIT_URL: &str = concatcp!(CCGI_URL, "background_init");
 const ZGETTUNNELS_URL: &str = concatcp!(CCGI_URL, "zgettunnels");
 
+#[allow(dead_code)] // silence clippy; this is logged
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct BgInitResponse {
     pub(crate) ver: String,
@@ -56,9 +57,8 @@ pub(crate) struct BgInitResponse {
     pub(crate) permanent: Option<bool>,
 }
 
-static CLIENT: Lazy<Client> = Lazy::new(|| {
-    ClientBuilder::new().user_agent(crate::common::USER_AGENT).build().expect("client")
-});
+static AGENT: Lazy<Agent> =
+    Lazy::new(|| AgentBuilder::new().user_agent(crate::common::USER_AGENT).build());
 
 // const VPN_COUNTRIES_URL: &str = concatcp!(CCGI_URL, "vpn_countries.json");
 // pub type CountryList = Vec<String>;
@@ -139,7 +139,7 @@ pub(crate) struct TunnelResponse {
     pub(crate) ztun: HashMap<String, Vec<String>>,
 }
 
-pub(crate) async fn get_tunnels(
+pub(crate) fn get_tunnels(
     uuid: &Uuid,
     session_key: i64,
     country: &str,
@@ -158,18 +158,17 @@ pub(crate) async fn get_tunnels(
         .append_pair("uuid", &uuid.to_simple_ref().to_string())
         .append_pair("session_key", &session_key.to_string())
         .append_pair("is_premium", "0");
-    Ok(CLIENT.get(url.as_str()).send().await?.error_for_status()?.json().await?)
+    Ok(AGENT.get(url.as_str()).call()?.into_json()?)
 }
 
 /// Login to Hola. Generates a random UUID unless one is provided.
-pub(crate) async fn background_init(uuid: Option<Uuid>) -> Result<(BgInitResponse, Uuid)> {
+pub(crate) fn background_init(uuid: Option<Uuid>) -> Result<(BgInitResponse, Uuid)> {
     log::debug!("bg_init using UUID {:?}", uuid);
     let uuid = uuid.unwrap_or_else(Uuid::new_v4);
     let mut url = Url::parse(BG_INIT_URL)?;
     url.query_pairs_mut().append_pair("uuid", &uuid.to_simple_ref().to_string());
     let login = &[("login", "1"), ("ver", EXT_VER)];
-    let resp =
-        CLIENT.post(url.as_str()).form(&login).send().await?.error_for_status()?.json().await?;
+    let resp = AGENT.post(url.as_str()).send_form(login)?.into_json()?;
     log::debug!("bg init response: {:?}", resp);
     Ok((resp, uuid))
 }
