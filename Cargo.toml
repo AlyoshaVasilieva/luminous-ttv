@@ -1,30 +1,40 @@
 [package]
 name = "luminous-ttv"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Malloc Voidstar <1284317+AlyoshaVasilieva@users.noreply.github.com>"]
-edition = "2018"
-resolver = "2"
+edition = "2021"
 repository = "https://github.com/AlyoshaVasilieva/luminous-ttv"
 license = "GPL-3.0-only"
 description = "Avoid Twitch ads by grabbing video playlists from Russia"
 
 [dependencies]
 anyhow = "1.0.43"
-clap = "3.0.0-beta.4"
-tide = { version = "0.16", default-features = false, features = ["h1-server", "logger"] }
-async-std = { version = "1.10", features = ["attributes", "unstable"] }
-ureq = { version = "2.2.0", features = ["json", "socks-proxy"] }
+clap = "=3.0.0-beta.5"
 once_cell = "1.8"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = "1.0.69"
 serde-tuple-vec-map = "1.0"
-rand = { version = "0.8.3", default-features = false, features = ["std"] }
+rand = "0.8.4"
 const_format = "0.2.18"
 url = "2.2.2"
 uuid = { version = "0.8.2", features = ["v4", "serde"] }
 extend = "1.1.2"
 confy = { git = "https://github.com/rust-cli/confy.git" }
-log = { version = "0.4.14", features = ["release_max_level_debug"] } # disable trace in releases
+
+axum = "0.3"
+tokio = { version = "1.13", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.4.10", features = ["util"] }
+tower-http = { version = "0.1.2", features = ["cors"] }
+tracing = { version = "0.1", features = ["release_max_level_debug"] } # disable trace in releases
+tracing-subscriber = "0.3"
+
+[dependencies.reqwest]
+version = "0.11.6"
+default-features = false
+features = ["rustls-tls", "gzip", "brotli", "socks", "json"]
+
+[target.'cfg(windows)'.dependencies]
+ansi_term = "0.12"
 
 [profile.release]
 codegen-units = 1

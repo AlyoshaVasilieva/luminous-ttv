@@ -1,15 +1,28 @@
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::time::Duration;
 
-use clap::{AppSettings, Clap};
+use anyhow::Result;
+use axum::{
+    body::{BoxBody, Bytes, Full},
+    extract::{Path, Query},
+    http::{Response, StatusCode},
+    response::{Headers, IntoResponse},
+    routing::get,
+    Json, Router,
+};
+use clap::Parser;
 use extend::ext;
 use once_cell::sync::OnceCell;
 use rand::{distributions::Alphanumeric, seq::SliceRandom, Rng};
+use reqwest::{Client, ClientBuilder, Proxy};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tide::security::{CorsMiddleware, Origin};
-use tide::{log, Request, Response, Result, Status, StatusCode};
-use ureq::{Agent, AgentBuilder, Proxy};
-use url::{form_urlencoded::Parse, Url};
+use tower_http::cors::{any, CorsLayer};
+#[allow(unused)]
+use tracing::{debug, error, info, warn, Level};
+use url::Url;
 use uuid::Uuid;
 
 use crate::hello::ProxyType;
@@ -24,30 +37,38 @@ const ID_PARAM: &str = "id";
 const VOD_ENDPOINT: &str = const_format::concatcp!("/vod/:", ID_PARAM);
 const LIVE_ENDPOINT: &str = const_format::concatcp!("/live/:", ID_PARAM);
 
-static AGENT: OnceCell<Agent> = OnceCell::new();
-// using ureq because it supports a wide variety of proxies, unlike surf
+static CLIENT: OnceCell<Client> = OnceCell::new();
 
-#[derive(Clap)]
+#[derive(Parser)]
 #[clap(version, about)]
-#[clap(setting = AppSettings::ColoredHelp)]
 struct Opts {
     /// Port for this server to listen on.
     #[clap(short, long, default_value = "9595")]
     server_port: u16,
-    /// Custom proxy to use, instead of Hola. Takes the form of 'scheme://user:password@host:port',
-    /// where scheme is one of: http/https/socks4/socks4a/socks5.
+    /// Custom proxy to use, instead of Hola. Takes the form of 'scheme://host:port',
+    /// where scheme is one of: http/https/socks5/socks5h.
     /// Must be in a country where Twitch doesn't serve ads for this system to work.
     #[clap(short, long)]
     proxy: Option<String>,
+    /// Country to request a proxy in. See https://client.hola.org/client_cgi/vpn_countries.json.
+    #[clap(short, long, conflicts_with = "proxy", parse(try_from_str = parse_country), default_value = "ru")]
+    country: String,
     /// Don't save Hola credentials.
-    #[clap(short, long)]
+    #[clap(short, long, conflicts_with = "proxy")]
     discard_creds: bool,
     /// Regenerate Hola credentials (don't load them).
-    #[clap(short, long)]
+    #[clap(short, long, conflicts_with = "proxy")]
     regen_creds: bool,
     /// Debug logging.
     #[clap(long)]
     debug: bool,
+}
+
+fn parse_country(input: &str) -> anyhow::Result<String> {
+    if input.len() != 2 {
+        anyhow::bail!("Country argument invalid, must be 2 letters: {}", input);
+    } // better to actually validate from the API, too lazy
+    Ok(input.to_lowercase())
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -55,93 +76,109 @@ struct Config {
     uuid: Option<Uuid>,
 }
 
-#[async_std::main]
-async fn main() -> Result<()> {
-    let crate_name = clap::crate_name!();
+const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
-    log::with_level(if opts.debug { log::LevelFilter::Debug } else { log::LevelFilter::Info });
-    let mut config: Config = confy::load(crate_name, None)?;
-    let mut ab =
-        AgentBuilder::new().user_agent(common::USER_AGENT).timeout(Duration::from_secs(20));
+    #[cfg(windows)]
+    {
+        if let Err(code) = ansi_term::enable_ansi_support() {
+            error!("failed to enable ANSI support, error code {}", code);
+        }
+    }
+    tracing_subscriber::fmt()
+        .with_max_level(if opts.debug { Level::DEBUG } else { Level::INFO })
+        .init();
+    let mut config: Config = confy::load(CRATE_NAME, None)?;
+    // TODO: SOCKS4 for reqwest
+    let mut cb =
+        ClientBuilder::new().user_agent(common::USER_AGENT).timeout(Duration::from_secs(20));
     if let Some(proxy) = opts.proxy {
-        ab = ab.proxy(Proxy::new(proxy)?);
+        cb = cb.proxy(Proxy::all(proxy)?);
     } else {
-        ab = setup_hola(&mut config, &opts, ab).await?;
+        cb = setup_hola(&mut config, &opts, cb).await?;
         if !opts.discard_creds {
-            log::info!(
+            info!(
                 "Saving Hola credentials to {}",
-                confy::get_configuration_file_path(crate_name, None)?.display()
+                confy::get_configuration_file_path(CRATE_NAME, None)?.display()
             );
-            confy::store(crate_name, None, &config)?;
+            confy::store(CRATE_NAME, None, &config)?;
         }
     };
-    let agent = ab.build();
-    AGENT.set(agent).unwrap();
-    let mut app = tide::new();
-    app.at(VOD_ENDPOINT).get(process_vod);
-    app.at(LIVE_ENDPOINT).get(process_live);
-    app.with(CorsMiddleware::new().allow_origin(Origin::Any));
-    app.listen(("127.0.0.1", opts.server_port)).await?;
+    let agent = cb.build()?;
+    CLIENT.set(agent).unwrap();
+    let app = Router::new()
+        .route(VOD_ENDPOINT, get(process_vod))
+        .route(LIVE_ENDPOINT, get(process_live))
+        .layer(CorsLayer::new().allow_origin(any()));
+    let addr = SocketAddr::from(([127, 0, 0, 1], opts.server_port));
+    axum::Server::bind(&addr).serve(app.into_make_service()).await?;
     Ok(())
 }
 
-/// Connect to Hola, retrieve tunnels, set the AgentBuilder to use one of the proxies. Updates
+/// Connect to Hola, retrieve tunnels, set the ClientBuilder to use one of the proxies. Updates
 /// stored UUID in the config if we regenerated our creds.
-async fn setup_hola(config: &mut Config, opts: &Opts, ab: AgentBuilder) -> Result<AgentBuilder> {
+async fn setup_hola(
+    config: &mut Config,
+    opts: &Opts,
+    cb: ClientBuilder,
+) -> anyhow::Result<ClientBuilder> {
     let uuid = if !opts.regen_creds { config.uuid } else { None };
-    let (bg, uuid) = hello::background_init(uuid)?;
+    let (bg, uuid) = hello::background_init(uuid).await?;
     config.uuid = Some(uuid);
-    if bg.blocked.unwrap_or_default() || bg.permanent.unwrap_or_default() {
+    if bg.blocked || bg.permanent {
         panic!("Blocked by Hola: {:?}", bg);
     }
     let proxy_type = ProxyType::Direct;
-    let tunnels = hello::get_tunnels(&uuid, bg.key, "ru", proxy_type, 3)?;
-    log::debug!("{:?}", tunnels);
+    let tunnels = hello::get_tunnels(&uuid, bg.key, &opts.country, proxy_type, 3).await?;
+    debug!("{:?}", tunnels);
     let login = hello::uuid_to_login(&uuid);
     let password = tunnels.agent_key;
-    log::debug!("login: {}", login);
-    log::debug!("password: {}", password);
+    debug!("login: {}", login);
+    debug!("password: {}", password);
     let (hostname, ip) =
         tunnels.ip_list.choose(&mut common::get_rng()).expect("no tunnels found in hola response");
     let port = proxy_type.get_port(&tunnels.port);
     let proxy = if !hostname.is_empty() {
-        // https://github.com/algesten/ureq/issues/420
-        format!("http://{}:{}@{}:{}", login, password, hostname, port)
+        format!("https://{}:{}", hostname, port)
     } else {
-        format!("http://{}:{}@{}:{}", login, password, ip, port)
+        format!("http://{}:{}", ip, port)
     }; // does this check actually need to exist?
-    Ok(ab.proxy(Proxy::new(proxy)?))
+    Ok(cb.proxy(Proxy::all(proxy)?.basic_auth(&login, &password)))
 }
 
-async fn process_live(req: Request<()>) -> Result<Response> {
-    let id = req.param(ID_PARAM).unwrap();
+type QueryMap = Query<HashMap<String, String>>;
+
+async fn process_live(Path(id): Path<String>, Query(query): QueryMap) -> Response<BoxBody> {
     let sid = StreamID::Live(id.to_lowercase());
-    process(sid, req.url().query_pairs()).await
+    process(sid, query).await.into_response()
 }
 
-async fn process_vod(req: Request<()>) -> Result<Response> {
-    let id = req.param(ID_PARAM).unwrap();
+async fn process_vod(Path(id): Path<u64>, Query(query): QueryMap) -> Response<BoxBody> {
     let sid = StreamID::VOD(id.to_string());
-    process(sid, req.url().query_pairs()).await
+    process(sid, query).await.into_response()
 }
 
-async fn process(sid: StreamID, query: Parse<'_>) -> Result<Response> {
+async fn process(sid: StreamID, query: HashMap<String, String>) -> AppResult<Response<BoxBody>> {
     let token = get_token(&sid).await?;
     let m3u8 = get_m3u8(&sid.get_url(), token.data.playback_access_token, query).await?;
-    Ok(Response::builder(StatusCode::Ok)
-        .content_type("application/vnd.apple.mpegurl")
-        .body(m3u8)
-        .build())
+    Ok((StatusCode::OK, Headers([("Content-Type", "application/vnd.apple.mpegurl")]), m3u8)
+        .into_response())
 }
 
-async fn get_m3u8(url: &str, token: PlaybackAccessToken, query: Parse<'_>) -> Result<String> {
+async fn get_m3u8(
+    url: &str,
+    token: PlaybackAccessToken,
+    query: HashMap<String, String>,
+) -> Result<String> {
     const PERMITTED_INCOMING_KEYS: [&str; 9] = [
         "player_backend",             // mediaplayer
         "playlist_include_framerate", // true
         "reassignments_supported",    // true
         "supported_codecs",           // avc1, usually. sometimes vp09,avc1
         "cdm",                        // wv
-        "player_version",             // 1.4.0 or 1.5.0 (being A/B tested?)
+        "player_version",             // 1.6.0
         "fast_bread",                 // true; related to low latency mode
         "allow_source",               // true
         "warp",                       // true; I have no idea what this is
@@ -149,21 +186,19 @@ async fn get_m3u8(url: &str, token: PlaybackAccessToken, query: Parse<'_>) -> Re
     let mut url = Url::parse(url)?;
     // set query string automatically using non-identifying parameters
     url.query_pairs_mut()
-        .extend_pairs(query.filter(|(k, _)| PERMITTED_INCOMING_KEYS.contains(&k.as_ref())));
+        .extend_pairs(query.iter().filter(|(k, _)| PERMITTED_INCOMING_KEYS.contains(&k.as_ref())));
     // add our fake ID
     url.query_pairs_mut()
         .append_pair("p", &common::get_rng().gen_range(0..=9_999_999).to_string())
         .append_pair("play_session_id", &generate_id().into_ascii_lowercase())
         .append_pair("token", &token.value)
         .append_pair("sig", &token.signature);
-    let m3u = async_std::task::spawn_blocking::<_, Result<_>>(move || {
-        Ok(AGENT.get().unwrap().get(url.as_str()).call().into_tide()?.into_string()?)
-    })
-    .await?;
+    let m3u =
+        CLIENT.get().unwrap().get(url.as_str()).send().await?.error_for_status()?.text().await?;
 
     const UC_START: &str = "USER-COUNTRY=\"";
     if let Some(country) = m3u.lines().find_map(|line| line.substring_between(UC_START, "\"")) {
-        log::info!("Twitch states that the proxy is in {}", country);
+        info!("Twitch states that the proxy is in {}", country);
     }
 
     Ok(m3u)
@@ -188,30 +223,57 @@ async fn get_token(sid: &StreamID) -> Result<AccessTokenResponse> {
         },
     });
     // XXX: I've seen a different method of doing this that involves X-Device-Id (frontpage only?)
-    async_std::task::spawn_blocking(|| {
-        Ok(AGENT
-            .get()
-            .unwrap()
-            .post("https://gql.twitch.tv/gql")
-            .set("Client-ID", TWITCH_CLIENT)
-            .set("Device-ID", &generate_id())
-            .send_json(request)
-            .into_tide()?
-            .into_json()?)
-    })
-    .await
+    Ok(CLIENT
+        .get()
+        .unwrap()
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-ID", TWITCH_CLIENT)
+        .header("Device-ID", &generate_id())
+        .json(&request)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
 }
 
-#[ext]
-impl<R> std::result::Result<R, ureq::Error> {
-    /// Attach a status code to a ureq response if it is an error. This lets Tide send
-    /// a 404 if ureq got a 404, instead of 404 becoming 500.
-    fn into_tide(self) -> tide::Result<R> {
-        match self {
-            Ok(r) => Ok(r),
-            Err(ureq::Error::Status(code, _)) => self.status(code),
-            Err(e) => Err(e.into()),
-        }
+type AppResult<T> = std::result::Result<T, AppError>;
+
+enum AppError {
+    Anyhow(anyhow::Error),
+}
+
+// TODO: thiserror?
+
+impl From<anyhow::Error> for AppError {
+    fn from(inner: anyhow::Error) -> Self {
+        AppError::Anyhow(inner)
+    }
+}
+
+// errors are first mapped to anyhow, then to AppError
+
+impl IntoResponse for AppError {
+    type Body = Full<Bytes>;
+    type BodyError = Infallible;
+
+    fn into_response(self) -> Response<Self::Body> {
+        let (status, error_message) = match self {
+            AppError::Anyhow(e) => {
+                let message = format!("{:?}", e);
+                let status = e
+                    .downcast_ref::<reqwest::Error>()
+                    .and_then(|e| e.status())
+                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                (status, message)
+            }
+        };
+        let body = Json(json!({
+            "code": status.as_u16(),
+            "error": error_message,
+        }));
+
+        (status, body).into_response()
     }
 }
 

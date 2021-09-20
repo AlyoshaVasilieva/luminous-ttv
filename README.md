@@ -66,6 +66,8 @@ Proxies must be located in a country where Twitch does not serve ads.
 Countries where Twitch does not serve ads, according to brief testing (Sep 2021):
 
 * Afghanistan
+* Bangladesh
+* Cambodia
 * China (GFW blocks Twitch and this program does not attempt to evade it)
 * Iran
 * Iraq
@@ -74,7 +76,9 @@ Countries where Twitch does not serve ads, according to brief testing (Sep 2021)
 * Russia
 * Saudi Arabia
 * Syria
+* Thailand
 * Turkey
+* Ukraine
 * United Arab Emirates
 
 This list likely varies over time.
