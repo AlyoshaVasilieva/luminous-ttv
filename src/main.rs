@@ -106,8 +106,8 @@ async fn main() -> anyhow::Result<()> {
             confy::store(CRATE_NAME, None, &config)?;
         }
     };
-    let agent = cb.build()?;
-    CLIENT.set(agent).unwrap();
+    let client = cb.build()?;
+    CLIENT.set(client).unwrap();
     let app = Router::new()
         .route(VOD_ENDPOINT, get(process_vod))
         .route(LIVE_ENDPOINT, get(process_live))
