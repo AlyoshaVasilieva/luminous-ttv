@@ -163,8 +163,7 @@ async fn process_vod(Path(id): Path<u64>, Query(query): QueryMap) -> Response<Bo
 async fn process(sid: StreamID, query: HashMap<String, String>) -> AppResult<Response<BoxBody>> {
     let token = get_token(&sid).await?;
     let m3u8 = get_m3u8(&sid.get_url(), token.data.playback_access_token, query).await?;
-    Ok((StatusCode::OK, Headers([("Content-Type", "application/vnd.apple.mpegurl")]), m3u8)
-        .into_response())
+    Ok((Headers([("Content-Type", "application/vnd.apple.mpegurl")]), m3u8).into_response())
 }
 
 async fn get_m3u8(
