@@ -1,11 +1,10 @@
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::time::Duration;
 
 use anyhow::Result;
 use axum::{
-    body::{BoxBody, Bytes, Full},
+    body::BoxBody,
     extract::{Path, Query},
     http::{Response, StatusCode},
     response::{Headers, IntoResponse},
@@ -39,7 +38,7 @@ const LIVE_ENDPOINT: &str = const_format::concatcp!("/live/:", ID_PARAM);
 
 static CLIENT: OnceCell<Client> = OnceCell::new();
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[clap(version, about)]
 struct Opts {
     /// Port for this server to listen on.
@@ -82,10 +81,8 @@ const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 async fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
     #[cfg(windows)]
-    {
-        if let Err(code) = ansi_term::enable_ansi_support() {
-            error!("failed to enable ANSI support, error code {}", code);
-        }
+    if let Err(code) = ansi_term::enable_ansi_support() {
+        error!("failed to enable ANSI support, error code {}", code);
     }
     tracing_subscriber::fmt()
         .with_max_level(if opts.debug { Level::DEBUG } else { Level::INFO })
@@ -253,10 +250,7 @@ impl From<anyhow::Error> for AppError {
 // errors are first mapped to anyhow, then to AppError
 
 impl IntoResponse for AppError {
-    type Body = Full<Bytes>;
-    type BodyError = Infallible;
-
-    fn into_response(self) -> Response<Self::Body> {
+    fn into_response(self) -> Response<BoxBody> {
         let (status, error_message) = match self {
             AppError::Anyhow(e) => {
                 let message = format!("{:?}", e);
