@@ -18,7 +18,7 @@ use rand::{distributions::Alphanumeric, seq::SliceRandom, Rng};
 use reqwest::{Client, ClientBuilder, Proxy};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tower_http::cors::{any, CorsLayer};
+use tower_http::cors::{Any, CorsLayer};
 #[allow(unused)]
 use tracing::{debug, error, info, warn, Level};
 use url::Url;
@@ -108,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route(VOD_ENDPOINT, get(process_vod))
         .route(LIVE_ENDPOINT, get(process_live))
-        .layer(CorsLayer::new().allow_origin(any()));
+        .layer(CorsLayer::new().allow_origin(Any));
     let addr = SocketAddr::from(([127, 0, 0, 1], opts.server_port));
     axum::Server::bind(&addr).serve(app.into_make_service()).await?;
     Ok(())
@@ -174,10 +174,10 @@ async fn get_m3u8(
         "reassignments_supported",    // true
         "supported_codecs",           // avc1, usually. sometimes vp09,avc1
         "cdm",                        // wv
-        "player_version",             // 1.6.0
+        "player_version",             // 1.9.0
         "fast_bread",                 // true; related to low latency mode
         "allow_source",               // true
-        "warp",                       // true; I have no idea what this is
+        "warp",                       // true; I have no idea what this is; no longer present
     ];
     let mut url = Url::parse(url)?;
     // set query string automatically using non-identifying parameters
