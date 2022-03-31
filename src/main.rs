@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -7,7 +7,7 @@ use axum::{
     body::BoxBody,
     extract::{Path, Query},
     http::{Response, StatusCode},
-    response::{Headers, IntoResponse},
+    response::IntoResponse,
     routing::get,
     Json, Router,
 };
@@ -41,6 +41,9 @@ static CLIENT: OnceCell<Client> = OnceCell::new();
 #[derive(Parser, Debug)]
 #[clap(version, about)]
 struct Opts {
+    /// Address for this server to listen on.
+    #[clap(short, long, default_value = "127.0.0.1")]
+    address: IpAddr,
     /// Port for this server to listen on.
     #[clap(short, long, default_value = "9595")]
     server_port: u16,
@@ -109,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
         .route(VOD_ENDPOINT, get(process_vod))
         .route(LIVE_ENDPOINT, get(process_live))
         .layer(CorsLayer::new().allow_origin(Any));
-    let addr = SocketAddr::from(([127, 0, 0, 1], opts.server_port));
+    let addr = SocketAddr::from((opts.address, opts.server_port));
     axum::Server::bind(&addr).serve(app.into_make_service()).await?;
     Ok(())
 }
@@ -160,7 +163,7 @@ async fn process_vod(Path(id): Path<u64>, Query(query): QueryMap) -> Response<Bo
 async fn process(sid: StreamID, query: HashMap<String, String>) -> AppResult<Response<BoxBody>> {
     let token = get_token(&sid).await?;
     let m3u8 = get_m3u8(&sid.get_url(), token.data.playback_access_token, query).await?;
-    Ok((Headers([("Content-Type", "application/vnd.apple.mpegurl")]), m3u8).into_response())
+    Ok(([("Content-Type", "application/vnd.apple.mpegurl")], m3u8).into_response())
 }
 
 async fn get_m3u8(

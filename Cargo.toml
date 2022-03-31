@@ -1,6 +1,6 @@
 [package]
 name = "luminous-ttv"
-version = "0.4.2"
+version = "0.4.3"
 authors = ["Malloc Voidstar <1284317+AlyoshaVasilieva@users.noreply.github.com>"]
 edition = "2021"
 repository = "https://github.com/AlyoshaVasilieva/luminous-ttv"
@@ -21,7 +21,7 @@ uuid = { version = "0.8.2", features = ["v4", "serde"] }
 extend = "1.1.2"
 confy = { git = "https://github.com/rust-cli/confy.git" }
 
-axum = "0.4"
+axum = "0.5"
 tokio = { version = "1.13", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.4.10", features = ["util"] }
 tower-http = { version = "0.2", features = ["cors"] }
