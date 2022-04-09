@@ -47,6 +47,10 @@ struct Opts {
     /// Port for this server to listen on.
     #[clap(short, long, default_value = "9595")]
     server_port: u16,
+    /// Connect directly to Twitch, without a proxy. Potentially useful when running this
+    /// server remotely.
+    #[clap(long, conflicts_with_all(&["proxy", "country"]))]
+    no_proxy: bool,
     /// Custom proxy to use, instead of Hola. Takes the form of 'scheme://host:port',
     /// where scheme is one of: http/https/socks5/socks5h.
     /// Must be in a country where Twitch doesn't serve ads for this system to work.
@@ -96,6 +100,8 @@ async fn main() -> anyhow::Result<()> {
         ClientBuilder::new().user_agent(common::USER_AGENT).timeout(Duration::from_secs(20));
     if let Some(proxy) = opts.proxy {
         cb = cb.proxy(Proxy::all(proxy)?);
+    } else if opts.no_proxy {
+        cb = cb.no_proxy()
     } else {
         cb = setup_hola(&mut config, &opts, cb).await?;
         if !opts.discard_creds {
