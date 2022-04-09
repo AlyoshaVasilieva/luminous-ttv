@@ -1,4 +1,4 @@
-//! Partial Rust port of https://github.com/Snawoot/hola-proxy
+//! Originally based on https://github.com/Snawoot/hola-proxy
 //!
 //! This file is MIT licensed.
 //!
@@ -29,6 +29,7 @@ use std::str::FromStr;
 
 use anyhow::{anyhow, Result};
 use const_format::concatcp;
+use isocountry::CountryCode;
 use once_cell::sync::Lazy;
 use rand::Rng;
 use reqwest::{Client, ClientBuilder};
@@ -65,20 +66,30 @@ pub(crate) struct BgInitResponse {
 static CLIENT: Lazy<Client> =
     Lazy::new(|| ClientBuilder::new().user_agent(crate::common::USER_AGENT).build().unwrap());
 
-// const VPN_COUNTRIES_URL: &str = concatcp!(CCGI_URL, "vpn_countries.json");
-// pub type CountryList = Vec<String>;
+const VPN_COUNTRIES_URL: &str = concatcp!(CCGI_URL, "vpn_countries.json");
 
-// pub(crate) async fn list_countries() -> Result<CountryList> {
-//     // TODO: Check that RU is available?
-//     Ok(CLIENT
-//         .get(VPN_COUNTRIES_URL)
-//         .header(EXT_BROWSER.0, EXT_BROWSER.1)
-//         .send()
-//         .await?
-//         .error_for_status()?
-//         .json()
-//         .await?)
-// }
+pub(crate) async fn list_countries() -> Result<()> {
+    // This prints to console, which isn't really proper API design, but whatever
+    let countries: Vec<String> = CLIENT
+        .get(VPN_COUNTRIES_URL)
+        .header(EXT_BROWSER.0, EXT_BROWSER.1)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    for code in countries {
+        // Hola incorrectly specifies the UK as "UK", but its alpha-2 code is GB
+        // fixup the display without changing the code, since we pass that to the API
+        let country = if code.eq_ignore_ascii_case("uk") {
+            CountryCode::GBR
+        } else {
+            CountryCode::for_alpha2_caseless(&code)?
+        };
+        println!("{}: {}", code, country);
+    }
+    Ok(())
+}
 
 pub(crate) fn uuid_to_login(uuid: &Uuid) -> String {
     format!("user-uuid-{:x}", uuid.to_simple_ref()) // lowercase hex, no hyphens

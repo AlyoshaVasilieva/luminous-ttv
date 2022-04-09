@@ -65,6 +65,9 @@ struct Opts {
     /// Regenerate Hola credentials (don't load them).
     #[clap(short, long, conflicts_with = "proxy")]
     regen_creds: bool,
+    /// List Hola's available countries, for use with --country
+    #[clap(long)]
+    list_countries: bool,
     /// Debug logging.
     #[clap(long)]
     debug: bool,
@@ -74,7 +77,7 @@ fn parse_country(input: &str) -> anyhow::Result<String> {
     if input.len() != 2 {
         anyhow::bail!("Country argument invalid, must be 2 letters: {}", input);
     } // better to actually validate from the API, too lazy
-    Ok(input.to_lowercase())
+    Ok(input.to_ascii_lowercase())
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -94,6 +97,9 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(if opts.debug { Level::DEBUG } else { Level::INFO })
         .init();
+    if opts.list_countries {
+        return hello::list_countries().await;
+    }
     let mut config: Config = confy::load(CRATE_NAME, None)?;
     // TODO: SOCKS4 for reqwest
     let mut cb =
