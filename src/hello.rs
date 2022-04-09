@@ -117,7 +117,7 @@ impl ProxyType {
     fn to_param(self, country: &str) -> String {
         match self {
             ProxyType::Direct => country.into(),
-            ProxyType::Lum => format!("{0}.pool_lum_{0}_shared", country),
+            ProxyType::Lum => format!("{0}.pool_lum_{0}_shared", country.to_ascii_lowercase()),
             // ProxyType::Peer => country.into(),
         }
     }
