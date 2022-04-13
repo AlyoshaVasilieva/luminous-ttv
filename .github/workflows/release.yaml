@@ -144,6 +144,9 @@ jobs:
       - name: Move Binary
         id: mv
         run: mv "target/${{ matrix.target }}/release/${{ matrix.binName }}" .
+      - name: chmod binary
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: chmod +x "${{ matrix.binName }}"
       - name: Zip Files
         uses: vimtor/action-zip@v1
         id: archive
