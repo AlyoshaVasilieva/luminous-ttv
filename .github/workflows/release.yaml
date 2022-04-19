@@ -140,6 +140,7 @@ jobs:
           use-cross: ${{ matrix.cross }}
           args: --release --target=${{ matrix.target }}
       - name: Smoke Test
+        if: ${{ matrix.target != 'aarch64-apple-darwin' }}
         uses: actions-rs/cargo@v1
         with:
           command: run
@@ -148,7 +149,7 @@ jobs:
       - name: Move Binary
         id: mv
         run: mv "target/${{ matrix.target }}/release/${{ matrix.binName }}" .
-      - name: chmod binary
+      - name: chmod binary #not working? ignored by zip action?
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: chmod +x "${{ matrix.binName }}"
       - name: Zip Files
