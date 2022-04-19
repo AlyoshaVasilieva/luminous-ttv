@@ -1,94 +1,114 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+#[cfg(feature = "tls")]
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
 use axum::{
     body::BoxBody,
     extract::{Path, Query},
-    http::{Response, StatusCode},
+    headers::UserAgent,
+    http::{
+        header::{CACHE_CONTROL, USER_AGENT},
+        HeaderMap, HeaderValue, Response, StatusCode,
+    },
     response::IntoResponse,
     routing::get,
-    Json, Router,
+    Json, Router, TypedHeader,
 };
 use clap::Parser;
 use extend::ext;
 use once_cell::sync::OnceCell;
-use rand::{distributions::Alphanumeric, seq::SliceRandom, Rng};
+use rand::{distributions::Alphanumeric, Rng};
 use reqwest::{Client, ClientBuilder, Proxy};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tower_default_headers::DefaultHeadersLayer;
 use tower_http::cors::{Any, CorsLayer};
 #[allow(unused)]
 use tracing::{debug, error, info, warn, Level};
 use url::Url;
-use uuid::Uuid;
-
-use crate::hello::ProxyType;
 
 mod common;
+#[cfg(feature = "hola")]
 mod hello;
+#[cfg(feature = "hola")]
+mod hello_config;
 
 /// Client-ID of Twitch's web player. Shown in the clear if you load the main page.
-/// Try `curl -s https://www.twitch.tv | tidy -q | grep '"Client-ID":"'`.
+/// Try `curl -s https://www.twitch.tv | tidy -q | grep 'clientId='`.
 const TWITCH_CLIENT: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 const ID_PARAM: &str = "id";
 const VOD_ENDPOINT: &str = const_format::concatcp!("/vod/:", ID_PARAM);
 const LIVE_ENDPOINT: &str = const_format::concatcp!("/live/:", ID_PARAM);
+// for Firefox only
+const STATUS_ENDPOINT: &str = "/stat/";
 
 static CLIENT: OnceCell<Client> = OnceCell::new();
 
 #[derive(Parser, Debug)]
 #[clap(version, about)]
-struct Opts {
+pub(crate) struct Opts {
     /// Address for this server to listen on.
     #[clap(short, long, default_value = "127.0.0.1")]
     address: IpAddr,
     /// Port for this server to listen on.
     #[clap(short, long, default_value = "9595")]
     server_port: u16,
-    /// Connect directly to Twitch, without a proxy. Potentially useful when running this
-    /// server remotely.
-    #[clap(long, conflicts_with_all(&["proxy", "country"]))]
+    /// Connect directly to Twitch, without a proxy. Useful when running this server remotely
+    /// in a country where Twitch doesn't serve ads.
+    #[cfg_attr(feature = "hola", clap(long, conflicts_with_all(&["proxy", "country"])))]
+    #[cfg_attr(not(feature = "hola"), clap(long, conflicts_with_all(&["proxy"])))]
     no_proxy: bool,
     /// Custom proxy to use, instead of Hola. Takes the form of 'scheme://host:port',
     /// where scheme is one of: http/https/socks5/socks5h.
     /// Must be in a country where Twitch doesn't serve ads for this system to work.
-    #[clap(short, long)]
-    proxy: Option<String>,
+    #[cfg_attr(feature = "hola", clap(short, long))]
+    #[cfg_attr(not(feature = "hola"), clap(short, long, required_unless_present = "no-proxy"))]
+    proxy: Option<Url>,
     /// Country to request a proxy in. See https://client.hola.org/client_cgi/vpn_countries.json.
+    #[cfg(feature = "hola")]
     #[clap(short, long, conflicts_with = "proxy", parse(try_from_str = parse_country), default_value = "ru")]
     country: String,
     /// Don't save Hola credentials.
+    #[cfg(feature = "hola")]
     #[clap(short, long, conflicts_with = "proxy")]
     discard_creds: bool,
     /// Regenerate Hola credentials (don't load them).
+    #[cfg(feature = "hola")]
     #[clap(short, long, conflicts_with = "proxy")]
     regen_creds: bool,
     /// List Hola's available countries, for use with --country
+    #[cfg(feature = "hola")]
     #[clap(long)]
     list_countries: bool,
+    /// Private key for TLS. Enables TLS if specified.
+    #[cfg(feature = "tls")]
+    #[clap(long, requires = "tls-cert", display_order = 4800)]
+    tls_key: Option<PathBuf>,
+    /// Server certificate for TLS.
+    #[cfg(feature = "tls")]
+    #[clap(long, display_order = 4801)]
+    tls_cert: Option<PathBuf>,
     /// Debug logging.
-    #[clap(long)]
+    #[clap(long, display_order = 5000)]
     debug: bool,
 }
 
-fn parse_country(input: &str) -> anyhow::Result<String> {
+#[cfg(feature = "hola")]
+fn parse_country(input: &str) -> Result<String> {
     if input.len() != 2 {
         anyhow::bail!("Country argument invalid, must be 2 letters: {}", input);
     } // better to actually validate from the API, too lazy
     Ok(input.to_ascii_lowercase())
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct Config {
-    uuid: Option<Uuid>,
-}
-
+#[cfg(feature = "hola")]
 const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     let opts = Opts::parse();
     #[cfg(windows)]
     if let Err(code) = ansi_term::enable_ansi_support() {
@@ -97,10 +117,12 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(if opts.debug { Level::DEBUG } else { Level::INFO })
         .init();
+    #[cfg(feature = "hola")]
     if opts.list_countries {
         return hello::list_countries().await;
     }
-    let mut config: Config = confy::load(CRATE_NAME, None)?;
+    #[cfg(feature = "hola")]
+    let mut config: hello_config::Config = confy::load(CRATE_NAME, None)?;
     // TODO: SOCKS4 for reqwest
     let mut cb =
         ClientBuilder::new().user_agent(common::USER_AGENT).timeout(Duration::from_secs(20));
@@ -109,80 +131,108 @@ async fn main() -> anyhow::Result<()> {
     } else if opts.no_proxy {
         cb = cb.no_proxy()
     } else {
-        cb = setup_hola(&mut config, &opts, cb).await?;
-        if !opts.discard_creds {
-            info!(
-                "Saving Hola credentials to {}",
-                confy::get_configuration_file_path(CRATE_NAME, None)?.display()
-            );
-            confy::store(CRATE_NAME, None, &config)?;
+        #[cfg(feature = "hola")]
+        {
+            cb = hello_config::setup_hola(&mut config, &opts, cb).await?;
+            if !opts.discard_creds {
+                info!(
+                    "Saving Hola credentials to {}",
+                    confy::get_configuration_file_path(CRATE_NAME, None)?.display()
+                );
+                confy::store(CRATE_NAME, None, &config)?;
+            }
         }
     };
     let client = cb.build()?;
     CLIENT.set(client).unwrap();
-    let app = Router::new()
+
+    let mut default_headers = HeaderMap::with_capacity(1);
+    default_headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache,no-store"));
+
+    let mut router = Router::new()
         .route(VOD_ENDPOINT, get(process_vod))
         .route(LIVE_ENDPOINT, get(process_live))
-        .layer(CorsLayer::new().allow_origin(Any));
+        .route(STATUS_ENDPOINT, get(status));
+    #[cfg(feature = "gzip")]
+    {
+        router = router.layer(tower_http::compression::CompressionLayer::new());
+    }
+    router = router
+        .layer(CorsLayer::new().allow_origin(Any))
+        .layer(DefaultHeadersLayer::new(default_headers));
     let addr = SocketAddr::from((opts.address, opts.server_port));
-    axum::Server::bind(&addr).serve(app.into_make_service()).await?;
+    #[cfg(feature = "tls")]
+    if let (Some(key), Some(cert)) = (opts.tls_key, opts.tls_cert) {
+        let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key).await?;
+        return Ok(axum_server::bind_rustls(addr, config)
+            .serve(router.into_make_service())
+            .await?);
+    }
+    axum::Server::bind(&addr).serve(router.into_make_service()).await?;
     Ok(())
 }
 
-/// Connect to Hola, retrieve tunnels, set the ClientBuilder to use one of the proxies. Updates
-/// stored UUID in the config if we regenerated our creds.
-async fn setup_hola(
-    config: &mut Config,
-    opts: &Opts,
-    cb: ClientBuilder,
-) -> anyhow::Result<ClientBuilder> {
-    let uuid = if !opts.regen_creds { config.uuid } else { None };
-    let (bg, uuid) = hello::background_init(uuid).await?;
-    config.uuid = Some(uuid);
-    if bg.blocked || bg.permanent {
-        panic!("Blocked by Hola: {:?}", bg);
-    }
-    let proxy_type = ProxyType::Direct;
-    let tunnels = hello::get_tunnels(&uuid, bg.key, &opts.country, proxy_type, 3).await?;
-    debug!("{:?}", tunnels);
-    let login = hello::uuid_to_login(&uuid);
-    let password = tunnels.agent_key;
-    debug!("login: {}", login);
-    debug!("password: {}", password);
-    let (hostname, ip) =
-        tunnels.ip_list.choose(&mut common::get_rng()).expect("no tunnels found in hola response");
-    let port = proxy_type.get_port(&tunnels.port);
-    let proxy = if !hostname.is_empty() {
-        format!("https://{}:{}", hostname, port)
-    } else {
-        format!("http://{}:{}", ip, port)
-    }; // does this check actually need to exist?
-    Ok(cb.proxy(Proxy::all(proxy)?.basic_auth(&login, &password)))
+#[derive(Copy, Clone, Debug, Serialize)]
+struct Status {
+    online: bool,
 }
+
+async fn status() -> Json<Status> {
+    // in Chrome-like browsers the extension can download the M3U8, and if that succeeds redirect
+    // to it in Base64 form. In Firefox that isn't permitted. Checking if the server is online before
+    // redirecting to it reduces the chance of the extension breaking Twitch.
+    // TODO: If the server is up but its functionality is broken (proxy rejections etc) this should
+    //  give `online: false`
+    Json(Status { online: true })
+}
+
+struct ProcessData {
+    sid: StreamID,
+    query: HashMap<String, String>,
+    user_agent: UserAgent,
+}
+
+// the User-Agent header is copied from the user if present
+// when using this locally it's basically pointless, but for a remote server handling many users
+// it should make it less detectable on Twitch's end (it'll look like more like a VPN endpoint or
+// similar rather than an automated system)
+// UAs shouldn't be individually identifiable in any remotely normal browser
 
 type QueryMap = Query<HashMap<String, String>>;
 
-async fn process_live(Path(id): Path<String>, Query(query): QueryMap) -> Response<BoxBody> {
-    let sid = StreamID::Live(id.to_lowercase());
-    process(sid, query).await.into_response()
+async fn process_live(
+    Path(id): Path<String>,
+    Query(query): QueryMap,
+    user_agent: Option<TypedHeader<UserAgent>>,
+) -> Response<BoxBody> {
+    let pd = ProcessData {
+        sid: StreamID::Live(id.into_ascii_lowercase()),
+        query,
+        user_agent: user_agent.unwrap_or_common(),
+    };
+    process(pd).await.into_response()
 }
 
-async fn process_vod(Path(id): Path<u64>, Query(query): QueryMap) -> Response<BoxBody> {
-    let sid = StreamID::VOD(id.to_string());
-    process(sid, query).await.into_response()
+async fn process_vod(
+    Path(id): Path<u64>,
+    Query(query): QueryMap,
+    user_agent: Option<TypedHeader<UserAgent>>,
+) -> Response<BoxBody> {
+    let pd = ProcessData {
+        sid: StreamID::VOD(id.to_string()),
+        query,
+        user_agent: user_agent.unwrap_or_common(),
+    };
+    process(pd).await.into_response()
 }
 
-async fn process(sid: StreamID, query: HashMap<String, String>) -> AppResult<Response<BoxBody>> {
-    let token = get_token(&sid).await?;
-    let m3u8 = get_m3u8(&sid.get_url(), token.data.playback_access_token, query).await?;
+async fn process(pd: ProcessData) -> AppResult<Response<BoxBody>> {
+    let token = get_token(&pd).await?;
+    let m3u8 = get_m3u8(&pd, token.data.playback_access_token).await?;
     Ok(([("Content-Type", "application/vnd.apple.mpegurl")], m3u8).into_response())
 }
 
-async fn get_m3u8(
-    url: &str,
-    token: PlaybackAccessToken,
-    query: HashMap<String, String>,
-) -> Result<String> {
+async fn get_m3u8(pd: &ProcessData, token: PlaybackAccessToken) -> Result<String> {
     const PERMITTED_INCOMING_KEYS: [&str; 9] = [
         "player_backend",             // mediaplayer
         "playlist_include_framerate", // true
@@ -194,18 +244,27 @@ async fn get_m3u8(
         "allow_source",               // true
         "warp",                       // true; I have no idea what this is; no longer present
     ];
-    let mut url = Url::parse(url)?;
+    let mut url = Url::parse(&pd.sid.get_url())?;
     // set query string automatically using non-identifying parameters
-    url.query_pairs_mut()
-        .extend_pairs(query.iter().filter(|(k, _)| PERMITTED_INCOMING_KEYS.contains(&k.as_ref())));
+    url.query_pairs_mut().extend_pairs(
+        pd.query.iter().filter(|(k, _)| PERMITTED_INCOMING_KEYS.contains(&k.as_ref())),
+    );
     // add our fake ID
     url.query_pairs_mut()
         .append_pair("p", &common::get_rng().gen_range(0..=9_999_999).to_string())
         .append_pair("play_session_id", &generate_id().into_ascii_lowercase())
         .append_pair("token", &token.value)
         .append_pair("sig", &token.signature);
-    let m3u =
-        CLIENT.get().unwrap().get(url.as_str()).send().await?.error_for_status()?.text().await?;
+    let m3u = CLIENT
+        .get()
+        .unwrap()
+        .get(url.as_str())
+        .header(USER_AGENT, pd.user_agent.as_str())
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
 
     const UC_START: &str = "USER-COUNTRY=\"";
     if let Some(country) = m3u.lines().find_map(|line| line.substring_between(UC_START, "\"")) {
@@ -216,7 +275,8 @@ async fn get_m3u8(
 }
 
 /// Get an access token for the given stream.
-async fn get_token(sid: &StreamID) -> Result<AccessTokenResponse> {
+async fn get_token(pd: &ProcessData) -> Result<AccessTokenResponse> {
+    let sid = &pd.sid;
     let request = json!({
         "operationName": "PlaybackAccessToken",
         "extensions": {
@@ -234,12 +294,14 @@ async fn get_token(sid: &StreamID) -> Result<AccessTokenResponse> {
         },
     });
     // XXX: I've seen a different method of doing this that involves X-Device-Id (frontpage only?)
+    //  2022-04-16: No longer seeing it
     Ok(CLIENT
         .get()
         .unwrap()
         .post("https://gql.twitch.tv/gql")
         .header("Client-ID", TWITCH_CLIENT)
         .header("Device-ID", &generate_id())
+        .header(USER_AGENT, pd.user_agent.as_str())
         .json(&request)
         .send()
         .await?
@@ -304,6 +366,14 @@ impl str {
     }
 }
 
+#[ext]
+impl Option<TypedHeader<UserAgent>> {
+    /// Returns the header value or the common User-Agent if not present.
+    fn unwrap_or_common(self) -> UserAgent {
+        self.map(|ua| ua.0).unwrap_or_else(|| UserAgent::from_static(common::USER_AGENT))
+    }
+}
+
 /// Generate an ID suitable for use both as a Device-ID and a play_session_id.
 /// The latter must be lowercased, as this function returns a mixed-case string.
 fn generate_id() -> String {
@@ -343,11 +413,10 @@ pub(crate) enum StreamID {
 impl StreamID {
     pub(crate) fn get_url(&self) -> String {
         const BASE: &str = "https://usher.ttvnw.net/";
-        let endpoint = match &self {
-            Self::Live(channel) => format!("api/channel/hls/{}.m3u8", channel),
-            Self::VOD(id) => format!("vod/{}.m3u8", id),
-        };
-        format!("{}{}", BASE, endpoint)
+        match &self {
+            Self::Live(channel) => format!("{}api/channel/hls/{}.m3u8", BASE, channel),
+            Self::VOD(id) => format!("{}vod/{}.m3u8", BASE, id),
+        }
     }
     pub(crate) fn data(&self) -> &str {
         match self {

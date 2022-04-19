@@ -64,7 +64,7 @@ pub(crate) struct BgInitResponse {
 }
 
 static CLIENT: Lazy<Client> =
-    Lazy::new(|| ClientBuilder::new().user_agent(crate::common::USER_AGENT).build().unwrap());
+    Lazy::new(|| ClientBuilder::new().user_agent(common::USER_AGENT).build().unwrap());
 
 const VPN_COUNTRIES_URL: &str = concatcp!(CCGI_URL, "vpn_countries.json");
 

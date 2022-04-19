@@ -9,23 +9,27 @@ description = "Avoid Twitch ads by grabbing video playlists from Russia"
 
 [dependencies]
 anyhow = "1.0.43"
-clap = { version = "3.0", features = ["derive"] }
+clap = { version = "3.1.9", features = ["derive"] }
 once_cell = "1.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.69"
-serde-tuple-vec-map = "1.0"
 rand = "0.8.4"
 const_format = "0.2.18"
 url = "2.2.2"
-uuid = { version = "0.8.2", features = ["v4", "serde"] }
 extend = "1.1.2"
-confy = { git = "https://github.com/rust-cli/confy.git" }
-isocountry = "0.3.2"
+# Only used by Hola code:
+uuid = { version = "0.8.2", features = ["v4", "serde"], optional = true }
+confy = { git = "https://github.com/rust-cli/confy.git", optional = true }
+isocountry = { version = "0.3.2", optional = true }
+serde-tuple-vec-map = { version = "1.0", optional = true }
 
-axum = "0.5"
+axum = { version = "0.5", features = ["headers"] }
+axum-server = { version = "0.4", optional = true }
 tokio = { version = "1.13", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.4.10", features = ["util"] }
 tower-http = { version = "0.2", features = ["cors"] }
+tower-default-headers = "0.1.1"
+
 tracing = { version = "0.1", features = ["release_max_level_debug"] } # disable trace in releases
 tracing-subscriber = "0.3"
 
@@ -37,6 +41,17 @@ features = ["rustls-tls", "gzip", "brotli", "socks", "json"]
 [target.'cfg(windows)'.dependencies]
 ansi_term = "0.12"
 
+[features]
+default = ["hola"]
+hola = ["confy", "isocountry", "serde-tuple-vec-map", "uuid"]
+gzip = ["tower-http/compression-gzip"]
+tls = ["axum-server/tls-rustls"]
+
 [profile.release]
 codegen-units = 1
 lto = true
+
+# for `cargo deb`
+[package.metadata.deb]
+default-features = false
+features = ["gzip", "tls"]
