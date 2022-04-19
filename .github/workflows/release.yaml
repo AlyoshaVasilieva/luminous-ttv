@@ -27,7 +27,7 @@ jobs:
         version: [ 'macos-latest', 'ubuntu-latest', 'windows-latest' ]
     runs-on: ${{ matrix.version }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: setup | rust
         uses: actions-rs/toolchain@v1
         with:
@@ -50,7 +50,7 @@ jobs:
           - clippy --all-targets --all-features -- -D warnings
     runs-on: ${{ matrix.version }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: setup | rust
         uses: actions-rs/toolchain@v1
         with:
@@ -69,7 +69,7 @@ jobs:
     outputs:
       version: ${{ steps.tag_name.outputs.current_version }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: setup | rust
         uses: actions-rs/toolchain@v1
         with:
@@ -112,6 +112,10 @@ jobs:
             os: macos-latest
             cross: false
             binName: luminous-ttv
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+            binName: luminous-ttv
           - target: i686-pc-windows-msvc
             os: windows-latest
             cross: false
@@ -121,7 +125,7 @@ jobs:
             cross: false
             binName: luminous-ttv.exe
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -154,7 +158,7 @@ jobs:
           files: README.md LICENSE-GPL.txt LICENSE-MIT.txt ${{ matrix.binName }}
           dest: luminous-ttv-${{ needs.release.outputs.version }}-${{ matrix.target }}.zip
       - name: Upload Archive
-        uses: ncipollo/release-action@v1.8.8
+        uses: ncipollo/release-action@v1.10.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
