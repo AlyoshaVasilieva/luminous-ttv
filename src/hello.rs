@@ -92,7 +92,7 @@ pub(crate) async fn list_countries() -> Result<()> {
 }
 
 pub(crate) fn uuid_to_login(uuid: &Uuid) -> String {
-    format!("user-uuid-{:x}", uuid.to_simple_ref()) // lowercase hex, no hyphens
+    format!("user-uuid-{:x}", uuid.as_simple()) // lowercase hex, no hyphens
 }
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -171,7 +171,7 @@ pub(crate) async fn get_tunnels(
         .append_pair("ext_ver", EXT_VER)
         .append_pair(EXT_BROWSER.0, EXT_BROWSER.1)
         .append_pair(PRODUCT.0, PRODUCT.1)
-        .append_pair("uuid", &uuid.to_simple_ref().to_string())
+        .append_pair("uuid", &uuid.as_simple().to_string())
         .append_pair("session_key", &session_key.to_string())
         .append_pair("is_premium", "0");
     Ok(CLIENT.get(url.as_str()).send().await?.error_for_status()?.json().await?)
@@ -182,7 +182,7 @@ pub(crate) async fn background_init(uuid: Option<Uuid>) -> Result<(BgInitRespons
     debug!("bg_init using UUID {:?}", uuid);
     let uuid = uuid.unwrap_or_else(Uuid::new_v4);
     let mut url = Url::parse(BG_INIT_URL)?;
-    url.query_pairs_mut().append_pair("uuid", &uuid.to_simple_ref().to_string());
+    url.query_pairs_mut().append_pair("uuid", &uuid.as_simple().to_string());
     let login = &[("login", "1"), ("ver", EXT_VER)];
     let resp =
         CLIENT.post(url.as_str()).form(login).send().await?.error_for_status()?.json().await?;
