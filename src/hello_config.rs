@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use rand::prelude::SliceRandom;
-use reqwest::{ClientBuilder, Proxy};
+use reqwest::Proxy;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 use uuid::Uuid;
@@ -12,6 +12,8 @@ use hello::ProxyType;
 
 use crate::{common, hello, Opts};
 
+const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct Config {
     uuid: Option<Uuid>,
@@ -19,11 +21,8 @@ pub(crate) struct Config {
 
 /// Connect to Hola, retrieve tunnels, set the ClientBuilder to use one of the proxies. Updates
 /// stored UUID in the config if we regenerated our creds.
-pub(crate) async fn setup_hola(
-    config: &mut Config,
-    opts: &Opts,
-    cb: ClientBuilder,
-) -> Result<ClientBuilder> {
+pub(crate) async fn setup_hola(opts: &Opts) -> Result<Proxy> {
+    let mut config: Config = confy::load(CRATE_NAME, None)?;
     let uuid = if !opts.regen_creds { config.uuid } else { None };
     let (bg, uuid) = hello::background_init(uuid).await?;
     config.uuid = Some(uuid);
@@ -45,5 +44,12 @@ pub(crate) async fn setup_hola(
     } else {
         format!("http://{}:{}", ip, port)
     }; // does this check actually need to exist?
-    Ok(cb.proxy(Proxy::all(proxy)?.basic_auth(&login, &password)))
+    if !opts.discard_creds {
+        debug!(
+            "Saving Hola credentials to {}",
+            confy::get_configuration_file_path(CRATE_NAME, None)?.display()
+        );
+        confy::store(CRATE_NAME, None, &config)?;
+    }
+    Ok(Proxy::all(proxy)?.basic_auth(&login, &password))
 }

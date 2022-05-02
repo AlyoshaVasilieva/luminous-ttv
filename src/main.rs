@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 #[cfg(feature = "tls")]
@@ -7,25 +8,29 @@ use std::time::Duration;
 use anyhow::Result;
 use axum::{
     body::BoxBody,
+    error_handling::HandleErrorLayer,
     extract::{Path, Query},
     headers::UserAgent,
     http::{
         header::{CACHE_CONTROL, USER_AGENT},
-        HeaderMap, HeaderValue, Response, StatusCode,
+        HeaderValue, Response, StatusCode,
     },
     response::IntoResponse,
     routing::get,
-    Json, Router, TypedHeader,
+    BoxError, Extension, Json, Router, TypedHeader,
 };
 use clap::Parser;
 use extend::ext;
-use once_cell::sync::OnceCell;
 use rand::{distributions::Alphanumeric, Rng};
-use reqwest::{Client, ClientBuilder, Proxy};
+use reqwest::{ClientBuilder, Proxy};
+use reqwest_middleware::ClientWithMiddleware as Client;
+use reqwest_retry::policies::ExponentialBackoff;
+use reqwest_retry::RetryTransientMiddleware;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tower_default_headers::DefaultHeadersLayer;
+use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::set_header::SetResponseHeaderLayer;
 #[allow(unused)]
 use tracing::{debug, error, info, warn, Level};
 use url::Url;
@@ -35,17 +40,25 @@ mod common;
 mod hello;
 #[cfg(feature = "hola")]
 mod hello_config;
+#[cfg(feature = "true-status")]
+mod status;
 
 /// Client-ID of Twitch's web player. Shown in the clear if you load the main page.
 /// Try `curl -s https://www.twitch.tv | tidy -q | grep 'clientId='`.
-const TWITCH_CLIENT: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+pub(crate) const TWITCH_CLIENT: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 const ID_PARAM: &str = "id";
 const VOD_ENDPOINT: &str = const_format::concatcp!("/vod/:", ID_PARAM);
 const LIVE_ENDPOINT: &str = const_format::concatcp!("/live/:", ID_PARAM);
 // for Firefox only
 const STATUS_ENDPOINT: &str = "/stat/";
+// for uptime monitoring
+#[cfg(feature = "true-status")]
+const TRUE_STATUS_ENDPOINT: &str = "/truestat/:secret";
+const CONCURRENCY_LIMIT: usize = 64;
 
-static CLIENT: OnceCell<Client> = OnceCell::new();
+#[cfg(feature = "true-status")]
+pub(crate) static PROXY: once_cell::sync::OnceCell<Option<Proxy>> =
+    once_cell::sync::OnceCell::new();
 
 #[derive(Parser, Debug)]
 #[clap(version, about)]
@@ -104,9 +117,6 @@ fn parse_country(input: &str) -> Result<String> {
     Ok(input.to_ascii_lowercase())
 }
 
-#[cfg(feature = "hola")]
-const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let opts = Opts::parse();
@@ -121,55 +131,99 @@ async fn main() -> Result<()> {
     if opts.list_countries {
         return hello::list_countries().await;
     }
-    #[cfg(feature = "hola")]
-    let mut config: hello_config::Config = confy::load(CRATE_NAME, None)?;
     // TODO: SOCKS4 for reqwest
-    let mut cb =
-        ClientBuilder::new().user_agent(common::USER_AGENT).timeout(Duration::from_secs(20));
-    if let Some(proxy) = opts.proxy {
-        cb = cb.proxy(Proxy::all(proxy)?);
+    let proxy = if let Some(proxy) = opts.proxy {
+        let proxy = Proxy::all(proxy)?;
+        Some(proxy)
     } else if opts.no_proxy {
-        cb = cb.no_proxy()
+        None
     } else {
-        #[cfg(feature = "hola")]
-        {
-            cb = hello_config::setup_hola(&mut config, &opts, cb).await?;
-            if !opts.discard_creds {
-                info!(
-                    "Saving Hola credentials to {}",
-                    confy::get_configuration_file_path(CRATE_NAME, None)?.display()
-                );
-                confy::store(CRATE_NAME, None, &config)?;
-            }
-        }
+        hola_proxy(&opts).await?
     };
-    let client = cb.build()?;
-    CLIENT.set(client).unwrap();
-
-    let mut default_headers = HeaderMap::with_capacity(1);
-    default_headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache,no-store"));
+    #[cfg(feature = "true-status")]
+    PROXY.set(proxy.clone()).unwrap();
+    let client = create_client(proxy)?;
 
     let mut router = Router::new()
         .route(VOD_ENDPOINT, get(process_vod))
         .route(LIVE_ENDPOINT, get(process_live))
-        .route(STATUS_ENDPOINT, get(status));
+        .route(STATUS_ENDPOINT, get(status))
+        .layer(Extension(client));
+    #[cfg(feature = "true-status")]
+    {
+        router = router.route(TRUE_STATUS_ENDPOINT, get(status::deep_status));
+    }
     #[cfg(feature = "gzip")]
     {
         router = router.layer(tower_http::compression::CompressionLayer::new());
     }
     router = router
         .layer(CorsLayer::new().allow_origin(Any))
-        .layer(DefaultHeadersLayer::new(default_headers));
-    let addr = SocketAddr::from((opts.address, opts.server_port));
+        .layer(SetResponseHeaderLayer::overriding(
+            CACHE_CONTROL,
+            HeaderValue::from_static("no-cache, no-store"),
+        ))
+        .layer(
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(handle_error))
+                .load_shed()
+                .concurrency_limit(CONCURRENCY_LIMIT)
+                .timeout(Duration::from_secs(40))
+                .into_inner(),
+        ); // rudimentary global rate-limiting, plus failsafe timeout
+    let addr = SocketAddr::new(opts.address, opts.server_port);
     #[cfg(feature = "tls")]
     if let (Some(key), Some(cert)) = (opts.tls_key, opts.tls_cert) {
-        let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key).await?;
+        let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert, &key).await?;
+        tokio::spawn(reload(config.clone(), key, cert));
         return Ok(axum_server::bind_rustls(addr, config)
             .serve(router.into_make_service())
             .await?);
     }
     axum::Server::bind(&addr).serve(router.into_make_service()).await?;
     Ok(())
+}
+
+#[cfg(feature = "hola")]
+async fn hola_proxy(opts: &Opts) -> Result<Option<Proxy>> {
+    let proxy = hello_config::setup_hola(opts).await?;
+    Ok(Some(proxy))
+}
+
+#[cfg(not(feature = "hola"))]
+async fn hola_proxy(_opts: &Opts) -> Result<Option<Proxy>> {
+    unreachable!("how'd you get here") // checked earlier by clap in arg parsing
+}
+
+pub(crate) fn create_client(proxy: Option<Proxy>) -> Result<Client> {
+    let mut cb =
+        ClientBuilder::new().user_agent(common::USER_AGENT).timeout(Duration::from_secs(20));
+    if let Some(proxy) = proxy {
+        cb = cb.proxy(proxy);
+    } else {
+        cb = cb.no_proxy();
+    }
+    let client = cb.build()?;
+    let backoff = ExponentialBackoff::builder()
+        .retry_bounds(Duration::from_millis(1), Duration::from_secs(2))
+        .build_with_total_retry_duration(Duration::from_secs(15));
+    let client = reqwest_middleware::ClientBuilder::new(client)
+        .with(RetryTransientMiddleware::new_with_policy(backoff))
+        .build();
+    // network errors can happen on occasion, this should avoid causing an annoying error for a user
+    Ok(client)
+}
+
+/// Endlessly loops, reloading the TLS certificate and key every 24 hours.
+#[cfg(feature = "tls")]
+async fn reload(config: axum_server::tls_rustls::RustlsConfig, key: PathBuf, cert: PathBuf) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
+        match config.reload_from_pem_file(&cert, &key).await {
+            Ok(_) => info!("reloaded TLS key/cert"),
+            Err(e) => error!("failed to reload TLS key/cert: {}", e),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize)]
@@ -181,12 +235,13 @@ async fn status() -> Json<Status> {
     // in Chrome-like browsers the extension can download the M3U8, and if that succeeds redirect
     // to it in Base64 form. In Firefox that isn't permitted. Checking if the server is online before
     // redirecting to it reduces the chance of the extension breaking Twitch.
-    // TODO: If the server is up but its functionality is broken (proxy rejections etc) this should
-    //  give `online: false`
-    Json(Status { online: true })
+    #[cfg(not(feature = "true-status"))]
+    return Json(Status { online: true });
+    #[cfg(feature = "true-status")]
+    return Json(Status { online: status::STATUS.load(std::sync::atomic::Ordering::Acquire) });
 }
 
-struct ProcessData {
+pub(crate) struct ProcessData {
     sid: StreamID,
     query: HashMap<String, String>,
     user_agent: UserAgent,
@@ -204,45 +259,47 @@ async fn process_live(
     Path(id): Path<String>,
     Query(query): QueryMap,
     user_agent: Option<TypedHeader<UserAgent>>,
+    Extension(client): Extension<Client>,
 ) -> Response<BoxBody> {
     let pd = ProcessData {
         sid: StreamID::Live(id.into_ascii_lowercase()),
         query,
         user_agent: user_agent.unwrap_or_common(),
     };
-    process(pd).await.into_response()
+    process(pd, &client).await.into_response()
 }
 
 async fn process_vod(
     Path(id): Path<u64>,
     Query(query): QueryMap,
     user_agent: Option<TypedHeader<UserAgent>>,
+    Extension(client): Extension<Client>,
 ) -> Response<BoxBody> {
     let pd = ProcessData {
         sid: StreamID::VOD(id.to_string()),
         query,
         user_agent: user_agent.unwrap_or_common(),
     };
-    process(pd).await.into_response()
+    process(pd, &client).await.into_response()
 }
 
-async fn process(pd: ProcessData) -> AppResult<Response<BoxBody>> {
-    let token = get_token(&pd).await?;
-    let m3u8 = get_m3u8(&pd, token.data.playback_access_token).await?;
+pub(crate) async fn process(pd: ProcessData, client: &Client) -> AppResult<Response<BoxBody>> {
+    let token = get_token(client, &pd).await?;
+    let m3u8 = get_m3u8(client, &pd, token.data.playback_access_token).await?;
     Ok(([("Content-Type", "application/vnd.apple.mpegurl")], m3u8).into_response())
 }
 
-async fn get_m3u8(pd: &ProcessData, token: PlaybackAccessToken) -> Result<String> {
+async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken) -> Result<String> {
     const PERMITTED_INCOMING_KEYS: [&str; 9] = [
         "player_backend",             // mediaplayer
         "playlist_include_framerate", // true
         "reassignments_supported",    // true
         "supported_codecs",           // avc1, usually. sometimes vp09,avc1
         "cdm",                        // wv
-        "player_version",             // 1.9.0
+        "player_version",             // 1.11.0
         "fast_bread",                 // true; related to low latency mode
         "allow_source",               // true
-        "warp",                       // true; I have no idea what this is; no longer present
+        "warp",                       // true; https://www.ietf.org/id/draft-lcurley-warp-01.html
     ];
     let mut url = Url::parse(&pd.sid.get_url())?;
     // set query string automatically using non-identifying parameters
@@ -255,9 +312,7 @@ async fn get_m3u8(pd: &ProcessData, token: PlaybackAccessToken) -> Result<String
         .append_pair("play_session_id", &generate_id().into_ascii_lowercase())
         .append_pair("token", &token.value)
         .append_pair("sig", &token.signature);
-    let m3u = CLIENT
-        .get()
-        .unwrap()
+    let m3u = client
         .get(url.as_str())
         .header(USER_AGENT, pd.user_agent.as_str())
         .send()
@@ -271,11 +326,19 @@ async fn get_m3u8(pd: &ProcessData, token: PlaybackAccessToken) -> Result<String
         info!("Twitch states that the proxy is in {}", country);
     }
 
+    #[cfg(feature = "redact-ip")]
+    {
+        // if the server is behind Cloudflare or similar, the playlist exposes the real IP, which
+        // removes all the DDoS protection
+        let user_ip = lazy_regex::regex!(r#"USER-IP="(([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3})""#);
+        return Ok(user_ip.replace(&m3u, r#"USER-IP="1.1.1.1""#).into_owned());
+    }
+    #[cfg(not(feature = "redact-ip"))]
     Ok(m3u)
 }
 
 /// Get an access token for the given stream.
-async fn get_token(pd: &ProcessData) -> Result<AccessTokenResponse> {
+async fn get_token(client: &Client, pd: &ProcessData) -> Result<AccessTokenResponse> {
     let sid = &pd.sid;
     let request = json!({
         "operationName": "PlaybackAccessToken",
@@ -295,9 +358,7 @@ async fn get_token(pd: &ProcessData) -> Result<AccessTokenResponse> {
     });
     // XXX: I've seen a different method of doing this that involves X-Device-Id (frontpage only?)
     //  2022-04-16: No longer seeing it
-    Ok(CLIENT
-        .get()
-        .unwrap()
+    Ok(client
         .post("https://gql.twitch.tv/gql")
         .header("Client-ID", TWITCH_CLIENT)
         .header("Device-ID", &generate_id())
@@ -423,6 +484,20 @@ impl StreamID {
             Self::Live(d) | Self::VOD(d) => d.as_str(),
         }
     }
+}
+
+async fn handle_error(error: BoxError) -> impl IntoResponse {
+    if error.is::<tower::timeout::error::Elapsed>() {
+        return (StatusCode::GATEWAY_TIMEOUT, Cow::from("timeout"));
+    }
+    if error.is::<tower::load_shed::error::Overloaded>() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Cow::from("service is overloaded, try again later"),
+        );
+    }
+
+    (StatusCode::INTERNAL_SERVER_ERROR, Cow::from(format!("Unhandled internal error: {}", error)))
 }
 
 #[cfg(test)]
