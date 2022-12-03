@@ -9,7 +9,7 @@ use anyhow::Result;
 use axum::{
     body::BoxBody,
     error_handling::HandleErrorLayer,
-    extract::{Path, Query},
+    extract::{Path, Query, State},
     headers::UserAgent,
     http::{
         header::{CACHE_CONTROL, USER_AGENT},
@@ -17,8 +17,9 @@ use axum::{
     },
     response::IntoResponse,
     routing::get,
-    BoxError, Extension, Json, Router, TypedHeader,
+    BoxError, Json, Router, TypedHeader,
 };
+use cfg_if::cfg_if;
 use clap::Parser;
 use extend::ext;
 use rand::{distributions::Alphanumeric, Rng};
@@ -49,11 +50,11 @@ pub(crate) const TWITCH_CLIENT: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 const ID_PARAM: &str = "id";
 const VOD_ENDPOINT: &str = const_format::concatcp!("/vod/:", ID_PARAM);
 const LIVE_ENDPOINT: &str = const_format::concatcp!("/live/:", ID_PARAM);
+/// TTV-LOL emulation
+const LIVE_TTVLOL_ENDPOINT: &str = const_format::concatcp!("/playlist/:", ID_PARAM);
 // for Firefox only
 const STATUS_ENDPOINT: &str = "/stat/";
-// for uptime monitoring
-#[cfg(feature = "true-status")]
-const TRUE_STATUS_ENDPOINT: &str = "/truestat/:secret";
+const STATUS_TTVLOL_ENDPOINT: &str = "/ping"; // no trailing slash
 const CONCURRENCY_LIMIT: usize = 64;
 
 #[cfg(feature = "true-status")]
@@ -104,8 +105,12 @@ pub(crate) struct Opts {
     #[cfg(feature = "tls")]
     #[clap(long, display_order = 4801)]
     tls_cert: Option<PathBuf>,
+    #[cfg(feature = "true-status")]
+    #[clap(long, env = "LUMINOUS_TTV_STATUS_SECRET")]
+    /// Secret for deep status endpoint, at /truestat/SECRET
+    status_secret: String,
     /// Debug logging.
-    #[clap(long, display_order = 5000)]
+    #[clap(long, display_order = 5000, env = "LUMINOUS_TTV_DEBUG")]
     debug: bool,
 }
 
@@ -121,7 +126,7 @@ fn parse_country(input: &str) -> Result<String> {
 async fn main() -> Result<()> {
     let opts = Opts::parse();
     #[cfg(windows)]
-    if let Err(code) = ansi_term::enable_ansi_support() {
+    if let Err(code) = nu_ansi_term::enable_ansi_support() {
         error!("failed to enable ANSI support, error code {}", code);
     }
     tracing_subscriber::fmt()
@@ -147,11 +152,14 @@ async fn main() -> Result<()> {
     let mut router = Router::new()
         .route(VOD_ENDPOINT, get(process_vod))
         .route(LIVE_ENDPOINT, get(process_live))
+        .route(LIVE_TTVLOL_ENDPOINT, get(process_live))
         .route(STATUS_ENDPOINT, get(status))
-        .layer(Extension(client));
+        .route(STATUS_TTVLOL_ENDPOINT, get(status)) // all TTV-LOL cares about is HTTP 200
+        .with_state(client);
     #[cfg(feature = "true-status")]
     {
-        router = router.route(TRUE_STATUS_ENDPOINT, get(status::deep_status));
+        router =
+            router.route(&format!("/truestat/{}", opts.status_secret), get(status::deep_status));
     }
     #[cfg(feature = "gzip")]
     {
@@ -231,20 +239,53 @@ struct Status {
     online: bool,
 }
 
-async fn status() -> Json<Status> {
-    // in Chrome-like browsers the extension can download the M3U8, and if that succeeds redirect
-    // to it in Base64 form. In Firefox that isn't permitted. Checking if the server is online before
-    // redirecting to it reduces the chance of the extension breaking Twitch.
-    #[cfg(not(feature = "true-status"))]
-    return Json(Status { online: true });
-    #[cfg(feature = "true-status")]
-    return Json(Status { online: status::STATUS.load(std::sync::atomic::Ordering::Acquire) });
+// in Chrome-like browsers the extension can download the M3U8, and if that succeeds redirect
+// to it in Base64 form. In Firefox that isn't permitted. Checking if the server is online before
+// redirecting to it reduces the chance of the extension breaking Twitch.
+cfg_if! {
+    if #[cfg(feature = "true-status")] {
+        async fn status() -> Response<BoxBody> {
+            let online = status::STATUS.load(std::sync::atomic::Ordering::Acquire);
+            if online {
+                (StatusCode::OK, Json(Status { online })).into_response()
+            } else {
+                (StatusCode::SERVICE_UNAVAILABLE, Json(Status { online })).into_response()
+            }
+        }
+    } else {
+        async fn status() -> Json<Status> {
+            Json(Status { online: true })
+        }
+    }
 }
 
 pub(crate) struct ProcessData {
     sid: StreamID,
     query: HashMap<String, String>,
     user_agent: UserAgent,
+}
+
+impl ProcessData {
+    fn build<F: FnOnce(String) -> StreamID>(
+        id: String,
+        query: HashMap<String, String>,
+        user_agent: Option<TypedHeader<UserAgent>>,
+        enum_type: F,
+    ) -> AppResult<Self> {
+        let (id, query) = if let Some((id, query)) = id.split_once(".m3u8?") {
+            // TTV-LOL encodes the query string into the path for some bizarre reason,
+            // so this ignores the empty query map, splits out the query string, then
+            // deserializes it to a map
+            // (axum already did the first percent-decoding step)
+            let query: HashMap<String, String> =
+                serde_urlencoded::from_str(query).map_err(|e| AppError::Anyhow(e.into()))?;
+            (id.to_ascii_lowercase(), query)
+        } else {
+            // normal path
+            (id.into_ascii_lowercase(), query)
+        };
+        Ok(Self { sid: enum_type(id), query, user_agent: user_agent.unwrap_or_common() })
+    }
 }
 
 // the User-Agent header is copied from the user if present
@@ -259,27 +300,30 @@ async fn process_live(
     Path(id): Path<String>,
     Query(query): QueryMap,
     user_agent: Option<TypedHeader<UserAgent>>,
-    Extension(client): Extension<Client>,
+    State(client): State<Client>,
 ) -> Response<BoxBody> {
-    let pd = ProcessData {
-        sid: StreamID::Live(id.into_ascii_lowercase()),
-        query,
-        user_agent: user_agent.unwrap_or_common(),
+    let pd = match ProcessData::build(id, query, user_agent, StreamID::Live) {
+        Ok(pd) => pd,
+        Err(e) => return e.into_response(),
     };
     process(pd, &client).await.into_response()
 }
 
 async fn process_vod(
-    Path(id): Path<u64>,
+    Path(id): Path<String>,
     Query(query): QueryMap,
     user_agent: Option<TypedHeader<UserAgent>>,
-    Extension(client): Extension<Client>,
+    State(client): State<Client>,
 ) -> Response<BoxBody> {
-    let pd = ProcessData {
-        sid: StreamID::VOD(id.to_string()),
-        query,
-        user_agent: user_agent.unwrap_or_common(),
+    let pd = match ProcessData::build(id, query, user_agent, StreamID::VOD) {
+        Ok(pd) => pd,
+        Err(e) => return e.into_response(),
     };
+    if let StreamID::VOD(s) = &pd.sid {
+        if s.parse::<u64>().is_err() {
+            return StatusCode::BAD_REQUEST.into_response();
+        } // can't validate up front (which is cleaner) due to TTV-LOL emulation
+    }
     process(pd, &client).await.into_response()
 }
 
@@ -296,11 +340,12 @@ async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken)
         "reassignments_supported",    // true
         "supported_codecs",           // avc1, usually. sometimes vp09,avc1
         "cdm",                        // wv
-        "player_version",             // 1.11.0
+        "player_version",             // 1.16.0
         "fast_bread",                 // true; related to low latency mode
         "allow_source",               // true
-        "warp",                       // true; https://www.ietf.org/id/draft-lcurley-warp-01.html
+        "warp",                       // true; https://datatracker.ietf.org/doc/draft-lcurley-warp/
     ];
+
     let mut url = Url::parse(&pd.sid.get_url())?;
     // set query string automatically using non-identifying parameters
     url.query_pairs_mut().extend_pairs(
@@ -311,7 +356,9 @@ async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken)
         .append_pair("p", &common::get_rng().gen_range(0..=9_999_999).to_string())
         .append_pair("play_session_id", &generate_id().into_ascii_lowercase())
         .append_pair("token", &token.value)
-        .append_pair("sig", &token.signature);
+        .append_pair("sig", &token.signature)
+        .append_pair("acmb", "e30=");
+    // "acmb" appears to be a tracking param, copy not permitted; value of e30= is empty object
     let m3u = client
         .get(url.as_str())
         .header(USER_AGENT, pd.user_agent.as_str())
@@ -373,6 +420,7 @@ async fn get_token(client: &Client, pd: &ProcessData) -> Result<AccessTokenRespo
 
 type AppResult<T> = std::result::Result<T, AppError>;
 
+#[derive(Debug)]
 enum AppError {
     Anyhow(anyhow::Error),
 }
