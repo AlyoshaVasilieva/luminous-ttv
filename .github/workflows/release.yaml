@@ -29,13 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: setup | rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          default: true
-          profile: minimal
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - run: cargo check
 
   lint:
@@ -44,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: [ 'macos-latest', 'ubuntu-latest', 'windows-latest' ]
+        version: [ 'macos-latest', 'ubuntu-20.04', 'windows-2022' ]
         cargo-cmd:
           - fmt --all -- --check
           - clippy --all-targets --all-features -- -D warnings
@@ -52,13 +49,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: setup | rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          default: true
-          profile: minimal
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - run: cargo ${{ matrix['cargo-cmd'] }}
 
   release:
@@ -70,12 +64,6 @@ jobs:
       version: ${{ steps.tag_name.outputs.current_version }}
     steps:
       - uses: actions/checkout@v3
-      - name: setup | rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          default: true
-          profile: minimal
       - name: Get version from tag
         id: tag_name
         run: |
@@ -101,51 +89,37 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            cross: true
+            os: ubuntu-20.04
             binName: luminous-ttv
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
-            cross: true
+            os: ubuntu-20.04
             binName: luminous-ttv
           - target: x86_64-apple-darwin
             os: macos-latest
-            cross: false
             binName: luminous-ttv
           - target: aarch64-apple-darwin
             os: macos-latest
-            cross: false
             binName: luminous-ttv
           - target: i686-pc-windows-msvc
-            os: windows-latest
-            cross: false
+            os: windows-2022
             binName: luminous-ttv.exe
           - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            cross: false
+            os: windows-2022
             binName: luminous-ttv.exe
     steps:
       - uses: actions/checkout@v3
+      - name: Install musl tools
+        if: ${{ contains(matrix.os, 'ubuntu') }}
+        run: sudo apt-get install -y musl-dev musl-tools
       - name: Setup Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          target: ${{ matrix.target }}
-          override: true
-      - uses: Swatinem/rust-cache@v1
-      - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          use-cross: ${{ matrix.cross }}
-          args: --release --target=${{ matrix.target }}
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --target=${{ matrix.target }}
       - name: Smoke Test
-        if: ${{ matrix.target != 'aarch64-apple-darwin' }}
-        uses: actions-rs/cargo@v1
-        with:
-          command: run
-          use-cross: ${{ matrix.cross }}
-          args: --release --target=${{ matrix.target }} -- -V
+        if: ${{ !contains(matrix.target, 'aarch64') }}
+        run: cargo run --release --target=${{ matrix.target }} -- -V
       - name: Move Binary
         id: mv
         run: mv "target/${{ matrix.target }}/release/${{ matrix.binName }}" .
@@ -159,7 +133,7 @@ jobs:
           files: README.md LICENSE-GPL.txt LICENSE-MIT.txt ${{ matrix.binName }}
           dest: luminous-ttv-${{ needs.release.outputs.version }}-${{ matrix.target }}.zip
       - name: Upload Archive
-        uses: ncipollo/release-action@v1.10.0
+        uses: ncipollo/release-action@v1.11.2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
