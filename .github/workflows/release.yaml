@@ -84,6 +84,8 @@ jobs:
     name: release binary assets
     needs: release
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: "-Clink-self-contained=yes -Clinker=rust-lld"
     strategy:
       fail-fast: false
       matrix:
@@ -110,7 +112,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Install musl tools
         if: ${{ contains(matrix.os, 'ubuntu') }}
-        run: sudo apt-get install -y musl-dev musl-tools
+        run: sudo apt-get install -y musl-dev musl-tools clang llvm
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
