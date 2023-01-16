@@ -1,6 +1,6 @@
 [package]
 name = "luminous-ttv"
-version = "0.5.0"
+version = "0.5.1"
 authors = ["Malloc Voidstar <1284317+AlyoshaVasilieva@users.noreply.github.com>"]
 edition = "2021"
 repository = "https://github.com/AlyoshaVasilieva/luminous-ttv"
