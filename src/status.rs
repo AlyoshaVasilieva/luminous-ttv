@@ -84,8 +84,10 @@ async fn find_random_stream(client: &Client) -> Result<String> {
         .iter()
         .filter_map(|s| s.stream.as_ref())
         .filter(|s| s.stream_type.eq_ignore_ascii_case("live"))
+        .filter(|s| !s.broadcaster.login.starts_with("prime"))
         .choose(&mut common::get_rng())
         .ok_or_else(|| anyhow!("no streams available"))?;
+    // streams named "prime*" are removed because they're Prime Video
     Ok(stream.broadcaster.login.clone())
 }
 
