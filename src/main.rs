@@ -65,52 +65,52 @@ pub(crate) static PROXY: once_cell::sync::OnceCell<Option<Proxy>> =
 #[clap(version, about)]
 pub(crate) struct Opts {
     /// Address for this server to listen on.
-    #[clap(short, long, default_value = "127.0.0.1")]
+    #[arg(short, long, default_value = "127.0.0.1")]
     address: IpAddr,
     /// Port for this server to listen on.
-    #[clap(short, long, default_value = "9595")]
+    #[arg(short, long, default_value = "9595")]
     server_port: u16,
     /// Connect directly to Twitch, without a proxy. Useful when running this server remotely
     /// in a country where Twitch doesn't serve ads.
-    #[cfg_attr(feature = "hola", clap(long, conflicts_with_all(&["proxy", "country"])))]
-    #[cfg_attr(not(feature = "hola"), clap(long, conflicts_with_all(&["proxy"])))]
+    #[cfg_attr(feature = "hola", arg(long, conflicts_with_all(&["proxy", "country"])))]
+    #[cfg_attr(not(feature = "hola"), arg(long, conflicts_with_all(&["proxy"])))]
     no_proxy: bool,
     /// Custom proxy to use, instead of Hola. Takes the form of 'scheme://host:port',
     /// where scheme is one of: http/https/socks5/socks5h.
     /// Must be in a country where Twitch doesn't serve ads for this system to work.
-    #[cfg_attr(feature = "hola", clap(short, long))]
-    #[cfg_attr(not(feature = "hola"), clap(short, long, required_unless_present = "no-proxy"))]
+    #[cfg_attr(feature = "hola", arg(short, long))]
+    #[cfg_attr(not(feature = "hola"), arg(short, long, required_unless_present = "no-proxy"))]
     proxy: Option<Url>,
     /// Country to request a proxy in. See https://client.hola.org/client_cgi/vpn_countries.json.
     #[cfg(feature = "hola")]
-    #[clap(short, long, conflicts_with = "proxy", parse(try_from_str = parse_country), default_value = "ru")]
+    #[arg(short, long, conflicts_with = "proxy", value_parser = parse_country, default_value = "ru")]
     country: String,
     /// Don't save Hola credentials.
     #[cfg(feature = "hola")]
-    #[clap(short, long, conflicts_with = "proxy")]
+    #[arg(short, long, conflicts_with = "proxy")]
     discard_creds: bool,
     /// Regenerate Hola credentials (don't load them).
     #[cfg(feature = "hola")]
-    #[clap(short, long, conflicts_with = "proxy")]
+    #[arg(short, long, conflicts_with = "proxy")]
     regen_creds: bool,
     /// List Hola's available countries, for use with --country
     #[cfg(feature = "hola")]
-    #[clap(long)]
+    #[arg(long)]
     list_countries: bool,
     /// Private key for TLS. Enables TLS if specified.
     #[cfg(feature = "tls")]
-    #[clap(long, requires = "tls-cert", display_order = 4800)]
+    #[arg(long, requires = "tls-cert", display_order = 4800)]
     tls_key: Option<PathBuf>,
     /// Server certificate for TLS.
     #[cfg(feature = "tls")]
-    #[clap(long, display_order = 4801)]
+    #[arg(long, display_order = 4801)]
     tls_cert: Option<PathBuf>,
     #[cfg(feature = "true-status")]
-    #[clap(long, env = "LUMINOUS_TTV_STATUS_SECRET")]
+    #[arg(long, env = "LUMINOUS_TTV_STATUS_SECRET")]
     /// Secret for deep status endpoint, at /truestat/SECRET
     status_secret: String,
     /// Debug logging.
-    #[clap(long, display_order = 5000, env = "LUMINOUS_TTV_DEBUG")]
+    #[arg(long, display_order = 5000, env = "LUMINOUS_TTV_DEBUG")]
     debug: bool,
 }
 
