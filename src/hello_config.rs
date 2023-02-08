@@ -27,7 +27,7 @@ pub(crate) async fn setup_hola(opts: &Opts) -> Result<Proxy> {
     let (bg, uuid) = hello::background_init(uuid).await?;
     config.uuid = Some(uuid);
     if bg.blocked || bg.permanent {
-        panic!("Blocked by Hola: {:?}", bg);
+        panic!("Blocked by Hola: {bg:?}");
     }
     let proxy_type = ProxyType::Direct;
     let tunnels = hello::get_tunnels(&uuid, bg.key, &opts.country, proxy_type, 3).await?;
@@ -40,9 +40,9 @@ pub(crate) async fn setup_hola(opts: &Opts) -> Result<Proxy> {
         tunnels.ip_list.choose(&mut common::get_rng()).expect("no tunnels found in hola response");
     let port = proxy_type.get_port(&tunnels.port);
     let proxy = if !hostname.is_empty() {
-        format!("https://{}:{}", hostname, port)
+        format!("https://{hostname}:{port}")
     } else {
-        format!("http://{}:{}", ip, port)
+        format!("http://{ip}:{port}")
     }; // does this check actually need to exist?
     if !opts.discard_creds {
         debug!(

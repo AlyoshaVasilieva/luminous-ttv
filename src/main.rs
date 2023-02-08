@@ -440,7 +440,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response<BoxBody> {
         let (status, error_message) = match self {
             AppError::Anyhow(e) => {
-                let message = format!("{:?}", e);
+                let message = format!("{e:?}");
                 let status = e
                     .downcast_ref::<reqwest::Error>()
                     .and_then(|e| e.status())
@@ -524,8 +524,8 @@ impl StreamID {
     pub(crate) fn get_url(&self) -> String {
         const BASE: &str = "https://usher.ttvnw.net/";
         match &self {
-            Self::Live(channel) => format!("{}api/channel/hls/{}.m3u8", BASE, channel),
-            Self::VOD(id) => format!("{}vod/{}.m3u8", BASE, id),
+            Self::Live(channel) => format!("{BASE}api/channel/hls/{channel}.m3u8"),
+            Self::VOD(id) => format!("{BASE}vod/{id}.m3u8"),
         }
     }
     pub(crate) fn data(&self) -> &str {
@@ -546,7 +546,7 @@ async fn handle_error(error: BoxError) -> impl IntoResponse {
         );
     }
 
-    (StatusCode::INTERNAL_SERVER_ERROR, Cow::from(format!("Unhandled internal error: {}", error)))
+    (StatusCode::INTERNAL_SERVER_ERROR, Cow::from(format!("Unhandled internal error: {error}")))
 }
 
 #[cfg(test)]

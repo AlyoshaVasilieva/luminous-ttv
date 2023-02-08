@@ -86,7 +86,7 @@ pub(crate) async fn list_countries() -> Result<()> {
         } else {
             CountryCode::for_alpha2_caseless(&code)?
         };
-        println!("{}: {}", code, country);
+        println!("{code}: {country}");
     }
     Ok(())
 }
