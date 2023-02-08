@@ -36,7 +36,7 @@ async fn test_random_stream(client: &Client) -> Result<()> {
     query.insert("player_backend", "mediaplayer");
     query.insert("supported_codecs", "avc1");
     query.insert("cdm", "wv");
-    query.insert("player_version", "1.16.0");
+    query.insert("player_version", "1.17.0");
     query.insert("allow_source", "true");
     query.insert("fast_bread", "true");
     query.insert("playlist_include_framerate", "true");

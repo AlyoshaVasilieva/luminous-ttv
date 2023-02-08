@@ -36,6 +36,7 @@ axum-server = { version = "0.4", optional = true }
 tokio = { version = "1.13", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.4.10", features = ["limit", "load-shed", "timeout", "util"] }
 tower-http = { version = "0.3", features = ["cors", "set-header"] }
+http = "0.2.8"
 
 tracing = { version = "0.1", features = ["release_max_level_debug"] } # disable trace in releases
 tracing-subscriber = "0.3"

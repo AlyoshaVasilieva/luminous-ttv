@@ -11,10 +11,6 @@ use axum::{
     error_handling::HandleErrorLayer,
     extract::{Path, Query, State},
     headers::UserAgent,
-    http::{
-        header::{CACHE_CONTROL, USER_AGENT},
-        HeaderValue, Response, StatusCode,
-    },
     response::IntoResponse,
     routing::get,
     BoxError, Json, Router, TypedHeader,
@@ -22,6 +18,10 @@ use axum::{
 use cfg_if::cfg_if;
 use clap::Parser;
 use extend::ext;
+use http::{
+    header::{CACHE_CONTROL, USER_AGENT},
+    HeaderValue, Response, StatusCode,
+};
 use rand::{distributions::Alphanumeric, Rng};
 use reqwest::{ClientBuilder, Proxy};
 use reqwest_middleware::ClientWithMiddleware as Client;
@@ -334,15 +334,16 @@ pub(crate) async fn process(pd: ProcessData, client: &Client) -> AppResult<Respo
 }
 
 async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken) -> Result<String> {
-    const PERMITTED_INCOMING_KEYS: [&str; 9] = [
+    const PERMITTED_INCOMING_KEYS: [&str; 10] = [
         "player_backend",             // mediaplayer
         "playlist_include_framerate", // true
         "reassignments_supported",    // true
         "supported_codecs",           // avc1, usually. sometimes vp09,avc1
         "cdm",                        // wv
-        "player_version",             // 1.16.0
+        "player_version",             // 1.17.0
         "fast_bread",                 // true; related to low latency mode
         "allow_source",               // true
+        "allow_audio_only",           // true
         "warp",                       // true; https://datatracker.ietf.org/doc/draft-lcurley-warp/
     ];
 
