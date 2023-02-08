@@ -137,7 +137,7 @@ jobs:
           files: README.md LICENSE-GPL.txt LICENSE-MIT.txt ${{ matrix.binName }}
           dest: luminous-ttv-${{ needs.release.outputs.version }}-${{ matrix.target }}.zip
       - name: Upload Archive
-        uses: ncipollo/release-action@v1.11.2
+        uses: ncipollo/release-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           allowUpdates: true
