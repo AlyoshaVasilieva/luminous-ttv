@@ -32,15 +32,16 @@ pub(crate) async fn deep_status() -> StatusCode {
 
 async fn test_random_stream(client: &Client) -> Result<()> {
     let login = find_random_stream(client).await.context("find_random_stream")?;
-    let mut query = HashMap::with_capacity(8);
+    let mut query = HashMap::with_capacity(9);
     query.insert("player_backend", "mediaplayer");
     query.insert("supported_codecs", "avc1");
     query.insert("cdm", "wv");
-    query.insert("player_version", "1.17.0");
+    query.insert("player_version", "1.18.0");
     query.insert("allow_source", "true");
     query.insert("fast_bread", "true");
     query.insert("playlist_include_framerate", "true");
     query.insert("reassignments_supported", "true");
+    query.insert("transcode_mode", "cbr_v1");
     let pd = ProcessData {
         sid: StreamID::Live(login),
         query: query.into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect(),

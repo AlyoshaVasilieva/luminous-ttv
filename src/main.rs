@@ -73,13 +73,13 @@ pub(crate) struct Opts {
     /// Connect directly to Twitch, without a proxy. Useful when running this server remotely
     /// in a country where Twitch doesn't serve ads.
     #[cfg_attr(feature = "hola", arg(long, conflicts_with_all(&["proxy", "country"])))]
-    #[cfg_attr(not(feature = "hola"), arg(long, conflicts_with_all(&["proxy"])))]
+    #[cfg_attr(not(feature = "hola"), arg(long, conflicts_with = "proxy"))]
     no_proxy: bool,
     /// Custom proxy to use, instead of Hola. Takes the form of 'scheme://host:port',
     /// where scheme is one of: http/https/socks5/socks5h.
     /// Must be in a country where Twitch doesn't serve ads for this system to work.
     #[cfg_attr(feature = "hola", arg(short, long))]
-    #[cfg_attr(not(feature = "hola"), arg(short, long, required_unless_present = "no-proxy"))]
+    #[cfg_attr(not(feature = "hola"), arg(short, long, required_unless_present = "no_proxy"))]
     proxy: Option<Url>,
     /// Country to request a proxy in. See https://client.hola.org/client_cgi/vpn_countries.json.
     #[cfg(feature = "hola")]
@@ -99,7 +99,7 @@ pub(crate) struct Opts {
     list_countries: bool,
     /// Private key for TLS. Enables TLS if specified.
     #[cfg(feature = "tls")]
-    #[arg(long, requires = "tls-cert", display_order = 4800)]
+    #[arg(long, requires = "tls_cert", display_order = 4800)]
     tls_key: Option<PathBuf>,
     /// Server certificate for TLS.
     #[cfg(feature = "tls")]
@@ -180,6 +180,7 @@ async fn main() -> Result<()> {
                 .into_inner(),
         ); // rudimentary global rate-limiting, plus failsafe timeout
     let addr = SocketAddr::new(opts.address, opts.server_port);
+    info!("About to start listening on {addr}");
     #[cfg(feature = "tls")]
     if let (Some(key), Some(cert)) = (opts.tls_key, opts.tls_cert) {
         let config = axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert, &key).await?;
@@ -334,17 +335,18 @@ pub(crate) async fn process(pd: ProcessData, client: &Client) -> AppResult<Respo
 }
 
 async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken) -> Result<String> {
-    const PERMITTED_INCOMING_KEYS: [&str; 10] = [
+    const PERMITTED_INCOMING_KEYS: [&str; 11] = [
         "player_backend",             // mediaplayer
         "playlist_include_framerate", // true
         "reassignments_supported",    // true
         "supported_codecs",           // avc1, usually. sometimes vp09,avc1
         "cdm",                        // wv
-        "player_version",             // 1.17.0
+        "player_version",             // 1.20.0
         "fast_bread",                 // true; related to low latency mode
         "allow_source",               // true
         "allow_audio_only",           // true
-        "warp",                       // true; https://datatracker.ietf.org/doc/draft-lcurley-warp/
+        "warp",                       // true; https://github.com/kixelated/warp-draft
+        "transcode_mode",             // cbr_v1
     ];
 
     let mut url = Url::parse(&pd.sid.get_url())?;
