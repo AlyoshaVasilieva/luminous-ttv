@@ -44,9 +44,6 @@ mod hello_config;
 #[cfg(feature = "true-status")]
 mod status;
 
-/// Client-ID of Twitch's web player. Shown in the clear if you load the main page.
-/// Try `curl -s https://www.twitch.tv | tidy -q | grep 'clientId='`.
-pub(crate) const TWITCH_CLIENT: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 const ID_PARAM: &str = "id";
 const VOD_ENDPOINT: &str = const_format::concatcp!("/vod/:", ID_PARAM);
 const LIVE_ENDPOINT: &str = const_format::concatcp!("/live/:", ID_PARAM);
@@ -65,10 +62,10 @@ pub(crate) static PROXY: once_cell::sync::OnceCell<Option<Proxy>> =
 #[clap(version, about)]
 pub(crate) struct Opts {
     /// Address for this server to listen on.
-    #[arg(short, long, default_value = "127.0.0.1")]
+    #[arg(short, long, default_value = "127.0.0.1", env = "LUMINOUS_TTV_ADDR")]
     address: IpAddr,
     /// Port for this server to listen on.
-    #[arg(short, long, default_value = "9595")]
+    #[arg(short, long, default_value = "9595", env = "LUMINOUS_TTV_PORT")]
     server_port: u16,
     /// Connect directly to Twitch, without a proxy. Useful when running this server remotely
     /// in a country where Twitch doesn't serve ads.
@@ -112,7 +109,18 @@ pub(crate) struct Opts {
     /// Debug logging.
     #[arg(long, display_order = 5000, env = "LUMINOUS_TTV_DEBUG")]
     debug: bool,
+    /// Twitch client ID used to access the API. Default is the ID of the website.
+    #[arg(long, default_value = "kimne78kx3ncx6brgo4mv6wki5h1ko", env = "LUMINOUS_TTV_CLIENT_ID")]
+    twitch_client_id: String,
+    /// User-Agent header value to use with all requests. Currently not necessary or useful,
+    /// provided because it seems potentially useful from comments I've seen. Overrides the normal
+    /// copy-or-default system.
+    #[arg(short, long, env = "LUMINOUS_TTV_USER_AGENT")]
+    user_agent: Option<HeaderValue>,
 }
+
+// The "kimne..." client ID is shown in the clear if you load the main page.
+// Try `curl -s https://www.twitch.tv | tidy -q | grep 'clientId='`.
 
 #[cfg(feature = "hola")]
 fn parse_country(input: &str) -> Result<String> {
@@ -124,7 +132,7 @@ fn parse_country(input: &str) -> Result<String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let opts = Opts::parse();
+    let opts: Opts = Opts::parse();
     #[cfg(windows)]
     if let Err(code) = nu_ansi_term::enable_ansi_support() {
         error!("failed to enable ANSI support, error code {}", code);
@@ -148,19 +156,25 @@ async fn main() -> Result<()> {
     #[cfg(feature = "true-status")]
     PROXY.set(proxy.clone()).unwrap();
     let client = create_client(proxy)?;
+    let state = LState {
+        client,
+        twitch_client_id: Box::leak(opts.twitch_client_id.into_boxed_str()),
+        user_agent: opts.user_agent,
+    };
 
+    #[allow(unused_mut)] // feature-gated
     let mut router = Router::new()
         .route(VOD_ENDPOINT, get(process_vod))
         .route(LIVE_ENDPOINT, get(process_live))
         .route(LIVE_TTVLOL_ENDPOINT, get(process_live))
         .route(STATUS_ENDPOINT, get(status))
-        .route(STATUS_TTVLOL_ENDPOINT, get(status)) // all TTV-LOL cares about is HTTP 200
-        .with_state(client);
+        .route(STATUS_TTVLOL_ENDPOINT, get(status)); // all TTV-LOL cares about is HTTP 200
     #[cfg(feature = "true-status")]
     {
         router =
             router.route(&format!("/truestat/{}", opts.status_secret), get(status::deep_status));
     }
+    let mut router = router.with_state(state);
     #[cfg(feature = "gzip")]
     {
         router = router.layer(tower_http::compression::CompressionLayer::new());
@@ -193,6 +207,14 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Debug)]
+struct LState {
+    client: Client,
+    twitch_client_id: &'static str,
+    // changing CID during operation isn't supported, so just leak it as a pointless optimization
+    user_agent: Option<HeaderValue>,
+}
+
 #[cfg(feature = "hola")]
 async fn hola_proxy(opts: &Opts) -> Result<Option<Proxy>> {
     let proxy = hello_config::setup_hola(opts).await?;
@@ -205,8 +227,7 @@ async fn hola_proxy(_opts: &Opts) -> Result<Option<Proxy>> {
 }
 
 pub(crate) fn create_client(proxy: Option<Proxy>) -> Result<Client> {
-    let mut cb =
-        ClientBuilder::new().user_agent(common::USER_AGENT).timeout(Duration::from_secs(20));
+    let mut cb = ClientBuilder::new().timeout(Duration::from_secs(20));
     if let Some(proxy) = proxy {
         cb = cb.proxy(proxy);
     } else {
@@ -270,7 +291,8 @@ impl ProcessData {
     fn build<F: FnOnce(String) -> StreamID>(
         id: String,
         query: HashMap<String, String>,
-        user_agent: Option<TypedHeader<UserAgent>>,
+        ua: Option<TypedHeader<UserAgent>>,
+        ua_override: Option<&HeaderValue>,
         enum_type: F,
     ) -> AppResult<Self> {
         let (id, query) = if let Some((id, query)) = id.split_once(".m3u8?") {
@@ -285,11 +307,12 @@ impl ProcessData {
             // normal path
             (id.into_ascii_lowercase(), query)
         };
-        Ok(Self { sid: enum_type(id), query, user_agent: user_agent.unwrap_or_common() })
+        let user_agent = common::get_user_agent(ua, ua_override)?;
+        Ok(Self { sid: enum_type(id), query, user_agent })
     }
 }
 
-// the User-Agent header is copied from the user if present
+// the User-Agent header is copied from the user if present by default
 // when using this locally it's basically pointless, but for a remote server handling many users
 // it should make it less detectable on Twitch's end (it'll look like more like a VPN endpoint or
 // similar rather than an automated system)
@@ -300,23 +323,23 @@ type QueryMap = Query<HashMap<String, String>>;
 async fn process_live(
     Path(id): Path<String>,
     Query(query): QueryMap,
-    user_agent: Option<TypedHeader<UserAgent>>,
-    State(client): State<Client>,
+    ua: Option<TypedHeader<UserAgent>>,
+    State(state): State<LState>,
 ) -> Response<BoxBody> {
-    let pd = match ProcessData::build(id, query, user_agent, StreamID::Live) {
+    let pd = match ProcessData::build(id, query, ua, state.user_agent.as_ref(), StreamID::Live) {
         Ok(pd) => pd,
         Err(e) => return e.into_response(),
     };
-    process(pd, &client).await.into_response()
+    process(pd, &state).await.into_response()
 }
 
 async fn process_vod(
     Path(id): Path<String>,
     Query(query): QueryMap,
-    user_agent: Option<TypedHeader<UserAgent>>,
-    State(client): State<Client>,
+    ua: Option<TypedHeader<UserAgent>>,
+    State(state): State<LState>,
 ) -> Response<BoxBody> {
-    let pd = match ProcessData::build(id, query, user_agent, StreamID::VOD) {
+    let pd = match ProcessData::build(id, query, ua, state.user_agent.as_ref(), StreamID::VOD) {
         Ok(pd) => pd,
         Err(e) => return e.into_response(),
     };
@@ -325,12 +348,12 @@ async fn process_vod(
             return StatusCode::BAD_REQUEST.into_response();
         } // can't validate up front (which is cleaner) due to TTV-LOL emulation
     }
-    process(pd, &client).await.into_response()
+    process(pd, &state).await.into_response()
 }
 
-pub(crate) async fn process(pd: ProcessData, client: &Client) -> AppResult<Response<BoxBody>> {
-    let token = get_token(client, &pd).await?;
-    let m3u8 = get_m3u8(client, &pd, token.data.playback_access_token).await?;
+pub(crate) async fn process(pd: ProcessData, state: &LState) -> AppResult<Response<BoxBody>> {
+    let token = get_token(state, &pd).await?;
+    let m3u8 = get_m3u8(&state.client, &pd, token.data.playback_access_token).await?;
     Ok(([("Content-Type", "application/vnd.apple.mpegurl")], m3u8).into_response())
 }
 
@@ -388,7 +411,7 @@ async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken)
 }
 
 /// Get an access token for the given stream.
-async fn get_token(client: &Client, pd: &ProcessData) -> Result<AccessTokenResponse> {
+async fn get_token(state: &LState, pd: &ProcessData) -> Result<AccessTokenResponse> {
     let sid = &pd.sid;
     let request = json!({
         "operationName": "PlaybackAccessToken",
@@ -408,9 +431,11 @@ async fn get_token(client: &Client, pd: &ProcessData) -> Result<AccessTokenRespo
     });
     // XXX: I've seen a different method of doing this that involves X-Device-Id (frontpage only?)
     //  2022-04-16: No longer seeing it
-    Ok(client
+    //  2023-06-02: it's definitely back
+    Ok(state
+        .client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-ID", TWITCH_CLIENT)
+        .header("Client-ID", state.twitch_client_id)
         .header("Device-ID", &generate_id())
         .header(USER_AGENT, pd.user_agent.as_str())
         .json(&request)
@@ -475,14 +500,6 @@ impl str {
         let s = &self[start_idx + start.len()..];
         let end_idx = s.find(end)?;
         Some(&s[..end_idx])
-    }
-}
-
-#[ext]
-impl Option<TypedHeader<UserAgent>> {
-    /// Returns the header value or the common User-Agent if not present.
-    fn unwrap_or_common(self) -> UserAgent {
-        self.map(|ua| ua.0).unwrap_or_else(|| UserAgent::from_static(common::USER_AGENT))
     }
 }
 

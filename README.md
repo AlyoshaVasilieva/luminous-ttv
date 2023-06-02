@@ -1,6 +1,6 @@
-## Currently broken
+## Status: Uncertain
 
-It doesn't work due to Twitch's integrity check, rolled out May 31st/June 1st 2023.
+It was broken for a while due to Twitch's integrity check, rolled out then reverted May 31st/June 1st 2023.
 
 ## Luminous TTV
 A [Rust][rust] server to retrieve and relay a playlist for Twitch livestreams/VODs.

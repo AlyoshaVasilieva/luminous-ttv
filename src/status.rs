@@ -2,22 +2,22 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{anyhow, Context, Result};
-use axum::headers::UserAgent;
-use axum::http::StatusCode;
+use axum::{extract::State, headers::UserAgent, http::StatusCode};
+use http::header::USER_AGENT;
 use rand::prelude::IteratorRandom;
-use reqwest_middleware::ClientWithMiddleware as Client;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{common, create_client, generate_id, AppError, ProcessData, StreamID, TWITCH_CLIENT};
+use crate::{common, create_client, generate_id, AppError, LState, ProcessData, StreamID};
 
 pub(crate) static STATUS: AtomicBool = AtomicBool::new(true);
 
 /// Point something like UptimeRobot/Caddy at this endpoint, it needs to be routinely hit
-pub(crate) async fn deep_status() -> StatusCode {
-    // purposefully not reusing client
+pub(crate) async fn deep_status(State(mut state): State<LState>) -> StatusCode {
     let client = create_client(crate::PROXY.get().unwrap().clone()).unwrap();
-    match test_random_stream(&client).await {
+    state.client = client;
+    // purposefully not reusing client
+    match test_random_stream(&state).await {
         Ok(_) => {
             STATUS.store(true, Ordering::Release);
             StatusCode::OK
@@ -30,8 +30,9 @@ pub(crate) async fn deep_status() -> StatusCode {
     }
 }
 
-async fn test_random_stream(client: &Client) -> Result<()> {
-    let login = find_random_stream(client).await.context("find_random_stream")?;
+async fn test_random_stream(state: &LState) -> Result<()> {
+    let user_agent = common::get_user_agent(None, state.user_agent.as_ref())?;
+    let login = find_random_stream(state, &user_agent).await.context("find_random_stream")?;
     let mut query = HashMap::with_capacity(9);
     query.insert("player_backend", "mediaplayer");
     query.insert("supported_codecs", "avc1");
@@ -45,16 +46,16 @@ async fn test_random_stream(client: &Client) -> Result<()> {
     let pd = ProcessData {
         sid: StreamID::Live(login),
         query: query.into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect(),
-        user_agent: UserAgent::from_static(common::USER_AGENT),
+        user_agent,
     };
-    match crate::process(pd, client).await {
+    match crate::process(pd, state).await {
         Ok(_) => Ok(()),
         Err(AppError::Anyhow(e)) => Err(e),
     }
     .context("process")
 }
 
-async fn find_random_stream(client: &Client) -> Result<String> {
+async fn find_random_stream(state: &LState, ua: &UserAgent) -> Result<String> {
     let req = json!({
         "operationName": "FeaturedContentCarouselStreams",
         "variables": {
@@ -69,10 +70,12 @@ async fn find_random_stream(client: &Client) -> Result<String> {
             }
         }
     });
-    let res: GQLResponse = client
+    let res: GQLResponse = state
+        .client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-ID", TWITCH_CLIENT)
+        .header("Client-ID", state.twitch_client_id)
         .header("Device-ID", &generate_id())
+        .header(USER_AGENT, ua.as_str())
         .json(&req)
         .send()
         .await?
