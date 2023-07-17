@@ -466,7 +466,15 @@ impl From<anyhow::Error> for AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response<BoxBody> {
         let (status, error_message) = match self {
-            AppError::Anyhow(e) => {
+            AppError::Anyhow(mut e) => {
+                if let Some(e) = e.downcast_mut::<reqwest::Error>() {
+                    if let Some(url) = e.url_mut() {
+                        // vaporize query string since the token has the IP that twitch sees
+                        // TODO: for a fix which preserves more info, copy the query string
+                        //  except for p, play_session_id, token, sig, acmb
+                        url.set_query(None);
+                    }
+                };
                 let message = format!("{e:?}");
                 let status = e
                     .downcast_ref::<reqwest::Error>()
