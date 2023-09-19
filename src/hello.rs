@@ -26,6 +26,7 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use const_format::concatcp;
@@ -44,6 +45,7 @@ use crate::common;
 // both Firefox and Chrome extensions have been removed from respective sites
 // Opera version still exists: https://addons.opera.com/en/extensions/details/hola-better-internet/
 // firefox version was removed later, so pretend to be FF
+// TODO: Chrome version restored, might need to pretend to be its current version
 const EXT_VER: &str = "1.186.727";
 const EXT_BROWSER: (&str, &str) = ("browser", "firefox"); // or chrome
 const PRODUCT: (&str, &str) = ("product", "www"); // "cws" for Chrome Web Store
@@ -52,19 +54,28 @@ const BG_INIT_URL: &str = concatcp!(CCGI_URL, "background_init");
 const ZGETTUNNELS_URL: &str = concatcp!(CCGI_URL, "zgettunnels");
 
 #[allow(dead_code)] // silence clippy; this is logged
-#[derive(Clone, Debug, Deserialize)]
-pub(crate) struct BgInitResponse {
-    pub(crate) ver: String,
-    pub(crate) key: i64,
-    pub(crate) country: String,
-    #[serde(default)]
-    pub(crate) blocked: bool,
-    #[serde(default)]
-    pub(crate) permanent: bool,
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum BgInitResponse {
+    Success {
+        ver: String,
+        key: i64,
+        country: String,
+    },
+    Block {
+        blocked: bool,
+        #[serde(default)]
+        permanent: bool,
+    },
 }
 
-static CLIENT: Lazy<Client> =
-    Lazy::new(|| ClientBuilder::new().user_agent(common::USER_AGENT).build().unwrap());
+static CLIENT: Lazy<Client> = Lazy::new(|| {
+    ClientBuilder::new()
+        .user_agent(common::USER_AGENT)
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap()
+});
 
 const VPN_COUNTRIES_URL: &str = concatcp!(CCGI_URL, "vpn_countries.json");
 

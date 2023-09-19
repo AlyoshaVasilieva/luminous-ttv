@@ -70,13 +70,19 @@ pub(crate) struct Opts {
     /// Connect directly to Twitch, without a proxy. Useful when running this server remotely
     /// in a country where Twitch doesn't serve ads.
     #[cfg_attr(feature = "hola", arg(long, conflicts_with_all(&["proxy", "country"])))]
-    #[cfg_attr(not(feature = "hola"), arg(long, conflicts_with = "proxy"))]
+    #[cfg_attr(
+        not(feature = "hola"),
+        arg(long, conflicts_with = "proxy", env = "LUMINOUS_TTV_NO_PROXY")
+    )]
     no_proxy: bool,
     /// Custom proxy to use, instead of Hola. Takes the form of 'scheme://host:port',
     /// where scheme is one of: http/https/socks5/socks5h.
     /// Must be in a country where Twitch doesn't serve ads for this system to work.
     #[cfg_attr(feature = "hola", arg(short, long))]
-    #[cfg_attr(not(feature = "hola"), arg(short, long, required_unless_present = "no_proxy"))]
+    #[cfg_attr(
+        not(feature = "hola"),
+        arg(short, long, required_unless_present = "no_proxy", env = "LUMINOUS_TTV_PROXY")
+    )]
     proxy: Option<Url>,
     /// Country to request a proxy in. See https://client.hola.org/client_cgi/vpn_countries.json.
     #[cfg(feature = "hola")]

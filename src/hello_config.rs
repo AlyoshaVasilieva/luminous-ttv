@@ -1,16 +1,16 @@
 //! Stores some of the Hola code to make conditional compilation cleaner. I should probably
 //! move more code into this file.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rand::prelude::SliceRandom;
 use reqwest::Proxy;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+use tracing::{debug, info};
 use uuid::Uuid;
 
 use hello::ProxyType;
 
-use crate::{common, hello, Opts};
+use crate::{common, hello, hello::BgInitResponse, Opts};
 
 const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 
@@ -19,18 +19,25 @@ pub(crate) struct Config {
     uuid: Option<Uuid>,
 }
 
-/// Connect to Hola, retrieve tunnels, set the ClientBuilder to use one of the proxies. Updates
+/// Connect to Hola, retrieve tunnels, return a Proxy. Updates
 /// stored UUID in the config if we regenerated our creds.
 pub(crate) async fn setup_hola(opts: &Opts) -> Result<Proxy> {
+    info!(
+        "Setting up Hola proxy. Regen: {} / Discard: {} / Country: {}",
+        opts.regen_creds, opts.discard_creds, opts.country
+    );
     let mut config: Config = confy::load(CRATE_NAME, None)?;
     let uuid = if !opts.regen_creds { config.uuid } else { None };
-    let (bg, uuid) = hello::background_init(uuid).await?;
+    let (bg, uuid) = hello::background_init(uuid).await.context("Hola init")?;
     config.uuid = Some(uuid);
-    if bg.blocked || bg.permanent {
-        panic!("Blocked by Hola: {bg:?}");
-    }
+    let key = match bg {
+        BgInitResponse::Success { key, .. } => key,
+        BgInitResponse::Block { .. } => {
+            panic!("Blocked by Hola: {bg:?}")
+        }
+    };
     let proxy_type = ProxyType::Direct;
-    let tunnels = hello::get_tunnels(&uuid, bg.key, &opts.country, proxy_type, 3).await?;
+    let tunnels = hello::get_tunnels(&uuid, key, &opts.country, proxy_type, 3).await?;
     debug!("{:?}", tunnels);
     let login = hello::uuid_to_login(&uuid);
     let password = tunnels.agent_key;
