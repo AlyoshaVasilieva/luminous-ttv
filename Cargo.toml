@@ -49,8 +49,6 @@ features = ["rustls-tls", "gzip", "brotli", "socks", "json"]
 [target.'cfg(windows)'.dependencies]
 nu-ansi-term = "0.49"
 
-enum-as-inner = "=0.5.1" # XXX temp fix for https://github.com/bluejekyll/trust-dns/issues/1946
-
 [features]
 default = ["hola"]
 hola = ["confy", "isocountry", "serde-tuple-vec-map", "uuid"]
