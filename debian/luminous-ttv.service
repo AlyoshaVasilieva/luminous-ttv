@@ -1,0 +1,24 @@
+[Unit]
+Description=Luminous TTV
+After=network.target
+StartLimitIntervalSec=0
+
+# Use `systemctl edit luminous-ttv` to setup the server.
+# For example, to set it up to use a specified proxy:
+#[Service]
+#Environment="LUMINOUS_TTV_ADDR=127.0.0.1"
+#Environment="LUMINOUS_TTV_PORT=9595"
+#Environment="LUMINOUS_TTV_PROXY=http://1.2.3.4:5"
+#Environment="LUMINOUS_TTV_STATUS_SECRET=somerandomvalue"
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+DynamicUser=yes
+LimitNOFILE=80000
+ExecStart=/usr/bin/luminous-ttv
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

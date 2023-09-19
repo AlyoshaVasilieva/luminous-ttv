@@ -1,6 +1,6 @@
 [package]
 name = "luminous-ttv"
-version = "0.5.5"
+version = "0.5.6"
 authors = ["Malloc Voidstar <1284317+AlyoshaVasilieva@users.noreply.github.com>"]
 edition = "2021"
 repository = "https://github.com/AlyoshaVasilieva/luminous-ttv"
@@ -65,5 +65,9 @@ lto = true
 
 # for `cargo deb`
 [package.metadata.deb]
+license-file = ["LICENSE-GPL.txt", "0"]
+maintainer-scripts = "debian/maint-scripts" # empty, see cargo-deb docs
+systemd-units = { enable = false, unit-scripts = "debian" }
 default-features = false
 features = ["gzip", "tls", "true-status", "redact-ip", "reqwest/trust-dns"]
+# reqwest/trust-dns is set in case it's running on musl with a broken DNS implementation
