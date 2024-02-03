@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 #[cfg(feature = "tls")]
 use std::path::PathBuf;
@@ -364,24 +364,25 @@ pub(crate) async fn process(pd: ProcessData, state: &LState) -> AppResult<Respon
 }
 
 async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken) -> Result<String> {
-    const PERMITTED_INCOMING_KEYS: [&str; 11] = [
+    let permitted_incoming_keys: HashSet<&str> = HashSet::from([
         "player_backend",             // mediaplayer
         "playlist_include_framerate", // true
         "reassignments_supported",    // true
-        "supported_codecs",           // avc1, usually. sometimes vp09,avc1
+        "supported_codecs",           // av1,h265,h264
         "cdm",                        // wv
-        "player_version",             // 1.20.0
+        "player_version",             // 1.24.0-rc.1.3
         "fast_bread",                 // true; related to low latency mode
         "allow_source",               // true
         "allow_audio_only",           // true
         "warp",                       // true; https://github.com/kixelated/warp-draft
         "transcode_mode",             // cbr_v1
-    ];
+        "platform",                   // web
+    ]);
 
     let mut url = Url::parse(&pd.sid.get_url())?;
     // set query string automatically using non-identifying parameters
     url.query_pairs_mut().extend_pairs(
-        pd.query.iter().filter(|(k, _)| PERMITTED_INCOMING_KEYS.contains(&k.as_ref())),
+        pd.query.iter().filter(|(k, _)| permitted_incoming_keys.contains(&k.as_ref())),
     );
     // add our fake ID
     url.query_pairs_mut()
