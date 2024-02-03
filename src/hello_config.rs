@@ -1,7 +1,7 @@
 //! Stores some of the Hola code to make conditional compilation cleaner. I should probably
 //! move more code into this file.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rand::prelude::SliceRandom;
 use reqwest::Proxy;
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ pub(crate) async fn setup_hola(opts: &Opts) -> Result<Proxy> {
     let key = match bg {
         BgInitResponse::Success { key, .. } => key,
         BgInitResponse::Block { .. } => {
-            panic!("Blocked by Hola: {bg:?}")
+            bail!("You've been blocked by Hola. Try re-running with --regen-creds. ({bg:?})");
         }
     };
     let proxy_type = ProxyType::Direct;

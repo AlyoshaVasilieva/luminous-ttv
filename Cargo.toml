@@ -47,15 +47,15 @@ default-features = false
 features = ["rustls-tls", "gzip", "brotli", "socks", "json"]
 
 [target.'cfg(windows)'.dependencies]
-nu-ansi-term = "0.49"
+nu-ansi-term = "0.50"
 
 [features]
 default = ["hola"]
 hola = ["confy", "isocountry", "serde-tuple-vec-map", "uuid"]
-gzip = ["tower-http/compression-gzip"]
-tls = ["axum-server/tls-rustls"]
-true-status = []
-redact-ip = ["lazy-regex"]
+gzip = ["tower-http/compression-gzip"] # compress responses
+tls = ["axum-server/tls-rustls"] # support listening as HTTPS, without needing a reverse proxy
+true-status = [] # extended status endpoint that simulates a user's request flow
+redact-ip = ["lazy-regex"] # try to hide server IP in responses (no guarantees)
 
 [profile.release]
 codegen-units = 1
