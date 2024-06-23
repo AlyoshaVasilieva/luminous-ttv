@@ -27,7 +27,7 @@ jobs:
         version: [ 'macos-latest', 'ubuntu-latest', 'windows-latest' ]
     runs-on: ${{ matrix.version }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: setup | rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -47,7 +47,7 @@ jobs:
           - clippy --all-targets --all-features -- -D warnings
     runs-on: ${{ matrix.version }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: setup | rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -63,7 +63,7 @@ jobs:
     outputs:
       version: ${{ steps.tag_name.outputs.current_version }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Get version from tag
         id: tag_name
         run: |
@@ -111,7 +111,7 @@ jobs:
             os: windows-2022
             binName: luminous-ttv.exe
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install musl tools
         if: ${{ contains(matrix.os, 'ubuntu') }}
         run: sudo apt-get install -y musl-dev musl-tools clang llvm
