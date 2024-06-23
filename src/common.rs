@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use axum::headers::{Header, UserAgent};
-use axum::TypedHeader;
+use axum_extra::headers::{Header, UserAgent};
+use axum_extra::TypedHeader;
 use http::HeaderValue;
 use rand::Rng;
 

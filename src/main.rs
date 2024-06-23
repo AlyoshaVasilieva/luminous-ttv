@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 #[cfg(feature = "tls")]
 use std::path::PathBuf;
@@ -7,14 +7,14 @@ use std::time::Duration;
 
 use anyhow::Result;
 use axum::{
-    body::BoxBody,
+    body::Body,
     error_handling::HandleErrorLayer,
     extract::{Path, Query, State},
-    headers::UserAgent,
     response::IntoResponse,
     routing::get,
-    BoxError, Json, Router, TypedHeader,
+    BoxError, Json, Router,
 };
+use axum_extra::{headers::UserAgent, TypedHeader};
 use cfg_if::cfg_if;
 use clap::Parser;
 use extend::ext;
@@ -25,8 +25,7 @@ use http::{
 use rand::{distributions::Alphanumeric, Rng};
 use reqwest::{ClientBuilder, Proxy};
 use reqwest_middleware::ClientWithMiddleware as Client;
-use reqwest_retry::policies::ExponentialBackoff;
-use reqwest_retry::RetryTransientMiddleware;
+use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tower::ServiceBuilder;
@@ -172,9 +171,7 @@ async fn main() -> Result<()> {
     let mut router = Router::new()
         .route(VOD_ENDPOINT, get(process_vod))
         .route(LIVE_ENDPOINT, get(process_live))
-        .route(LIVE_TTVLOL_ENDPOINT, get(process_live))
-        .route(STATUS_ENDPOINT, get(status))
-        .route(STATUS_TTVLOL_ENDPOINT, get(status)); // all TTV-LOL cares about is HTTP 200
+        .route(LIVE_TTVLOL_ENDPOINT, get(process_live));
     #[cfg(feature = "true-status")]
     {
         router =
@@ -185,20 +182,28 @@ async fn main() -> Result<()> {
     {
         router = router.layer(tower_http::compression::CompressionLayer::new());
     }
+    router = router.layer(
+        ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(handle_error))
+            .load_shed()
+            .concurrency_limit(CONCURRENCY_LIMIT)
+            .timeout(Duration::from_secs(40))
+            .into_inner(),
+    ); // rudimentary global rate-limiting, plus failsafe timeout
+       // TODO: Investigate IP-based rate-limiting (tower_governor). Remember to have configurable
+       //  code for trusting the reverse proxy, etc. Remember to limit by /64 for v6.
+
+    // NOTE! Concurrency limit layer must be below (in layer terms, or before in code terms)
+    // status endpoints! Otherwise, the tiny status endpoint uses up all the rate-limit available.
+
     router = router
+        .route(STATUS_ENDPOINT, get(status))
+        .route(STATUS_TTVLOL_ENDPOINT, get(status)) // all TTV-LOL cares about is HTTP 200
         .layer(CorsLayer::new().allow_origin(Any))
         .layer(SetResponseHeaderLayer::overriding(
             CACHE_CONTROL,
             HeaderValue::from_static("no-cache, no-store"),
-        ))
-        .layer(
-            ServiceBuilder::new()
-                .layer(HandleErrorLayer::new(handle_error))
-                .load_shed()
-                .concurrency_limit(CONCURRENCY_LIMIT)
-                .timeout(Duration::from_secs(40))
-                .into_inner(),
-        ); // rudimentary global rate-limiting, plus failsafe timeout
+        ));
     let addr = SocketAddr::new(opts.address, opts.server_port);
     info!("About to start listening on {addr}");
     #[cfg(feature = "tls")]
@@ -209,7 +214,7 @@ async fn main() -> Result<()> {
             .serve(router.into_make_service())
             .await?);
     }
-    axum::Server::bind(&addr).serve(router.into_make_service()).await?;
+    axum_server::bind(addr).serve(router.into_make_service()).await?;
     Ok(())
 }
 
@@ -272,7 +277,7 @@ struct Status {
 // redirecting to it reduces the chance of the extension breaking Twitch.
 cfg_if! {
     if #[cfg(feature = "true-status")] {
-        async fn status() -> Response<BoxBody> {
+        async fn status() -> Response<Body> {
             let online = status::STATUS.load(std::sync::atomic::Ordering::Acquire);
             if online {
                 (StatusCode::OK, Json(Status { online })).into_response()
@@ -331,7 +336,7 @@ async fn process_live(
     Query(query): QueryMap,
     ua: Option<TypedHeader<UserAgent>>,
     State(state): State<LState>,
-) -> Response<BoxBody> {
+) -> Response<Body> {
     let pd = match ProcessData::build(id, query, ua, state.user_agent.as_ref(), StreamID::Live) {
         Ok(pd) => pd,
         Err(e) => return e.into_response(),
@@ -344,7 +349,7 @@ async fn process_vod(
     Query(query): QueryMap,
     ua: Option<TypedHeader<UserAgent>>,
     State(state): State<LState>,
-) -> Response<BoxBody> {
+) -> Response<Body> {
     let pd = match ProcessData::build(id, query, ua, state.user_agent.as_ref(), StreamID::VOD) {
         Ok(pd) => pd,
         Err(e) => return e.into_response(),
@@ -357,32 +362,37 @@ async fn process_vod(
     process(pd, &state).await.into_response()
 }
 
-pub(crate) async fn process(pd: ProcessData, state: &LState) -> AppResult<Response<BoxBody>> {
+pub(crate) async fn process(pd: ProcessData, state: &LState) -> AppResult<Response<Body>> {
     let token = get_token(state, &pd).await?;
     let m3u8 = get_m3u8(&state.client, &pd, token.data.playback_access_token).await?;
     Ok(([("Content-Type", "application/vnd.apple.mpegurl")], m3u8).into_response())
 }
 
 async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken) -> Result<String> {
-    let permitted_incoming_keys: HashSet<&str> = HashSet::from([
+    static PERMITTED_INCOMING_KEYS: phf::Set<&str> = phf::phf_set! {
         "player_backend",             // mediaplayer
         "playlist_include_framerate", // true
         "reassignments_supported",    // true
         "supported_codecs",           // av1,h265,h264
         "cdm",                        // wv
-        "player_version",             // 1.24.0-rc.1.3
+        "player_version",             // 1.28.0-rc.2
         "fast_bread",                 // true; related to low latency mode
         "allow_source",               // true
         "allow_audio_only",           // true
         "warp",                       // true; https://github.com/kixelated/warp-draft
         "transcode_mode",             // cbr_v1
         "platform",                   // web
-    ]);
+    };
+    // Some stuff that isn't permitted, but exists:
+    //  browser_family
+    //  browser_version
+    //  os_name
+    //  os_version
 
     let mut url = Url::parse(&pd.sid.get_url())?;
     // set query string automatically using non-identifying parameters
     url.query_pairs_mut().extend_pairs(
-        pd.query.iter().filter(|(k, _)| permitted_incoming_keys.contains(&k.as_ref())),
+        pd.query.iter().filter(|(k, _)| PERMITTED_INCOMING_KEYS.contains(k.as_ref())),
     );
     // add our fake ID
     url.query_pairs_mut()
@@ -436,9 +446,12 @@ async fn get_token(state: &LState, pd: &ProcessData) -> Result<AccessTokenRespon
             "playerType": "site", // "embed" may also be valid
         },
     });
+    // Newer hash: 3093517e37e4f4cb48906155bcd894150aef92617939236d2508f3375ab732ce (same vars)
+
     // XXX: I've seen a different method of doing this that involves X-Device-Id (frontpage only?)
     //  2022-04-16: No longer seeing it
     //  2023-06-02: it's definitely back
+
     Ok(state
         .client
         .post("https://gql.twitch.tv/gql")
@@ -471,7 +484,7 @@ impl From<anyhow::Error> for AppError {
 // errors are first mapped to anyhow, then to AppError
 
 impl IntoResponse for AppError {
-    fn into_response(self) -> Response<BoxBody> {
+    fn into_response(self) -> Response<Body> {
         let (status, error_message) = match self {
             AppError::Anyhow(mut e) => {
                 if let Some(e) = e.downcast_mut::<reqwest::Error>() {

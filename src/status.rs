@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{anyhow, Context, Result};
-use axum::{extract::State, headers::UserAgent, http::StatusCode};
+use axum::{extract::State, http::StatusCode};
+use axum_extra::headers::UserAgent;
 use http::header::USER_AGENT;
 use rand::prelude::IteratorRandom;
 use serde::Deserialize;
@@ -120,6 +121,5 @@ struct Stream {
 
 #[derive(Debug, Deserialize)]
 struct Broadcaster {
-    #[serde(rename = "login")]
     pub(crate) login: String,
 }
