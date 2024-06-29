@@ -72,5 +72,5 @@ license-file = ["LICENSE-GPL.txt", "0"]
 maintainer-scripts = "debian/maint-scripts" # empty, see cargo-deb docs
 systemd-units = { enable = false, unit-scripts = "debian" }
 default-features = false
-features = ["gzip", "tls", "true-status", "redact-ip", "reqwest/trust-dns"]
-# reqwest/trust-dns is set in case it's running on musl with a broken DNS implementation
+features = ["gzip", "tls", "true-status", "redact-ip", "reqwest/hickory-dns"]
+# reqwest/hickory-dns is set in case it's running on musl with a broken DNS implementation
