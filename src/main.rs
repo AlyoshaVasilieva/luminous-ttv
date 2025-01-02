@@ -246,7 +246,7 @@ pub(crate) fn create_client(proxy: Option<Proxy>) -> Result<Client> {
     }
     let client = cb.build()?;
     let backoff = ExponentialBackoff::builder()
-        .retry_bounds(Duration::from_millis(1), Duration::from_secs(2))
+        .retry_bounds(Duration::from_millis(200), Duration::from_secs(3))
         .build_with_total_retry_duration(Duration::from_secs(15));
     let client = reqwest_middleware::ClientBuilder::new(client)
         .with(RetryTransientMiddleware::new_with_policy(backoff))
@@ -275,6 +275,7 @@ struct Status {
 // in Chrome-like browsers the extension can download the M3U8, and if that succeeds redirect
 // to it in Base64 form. In Firefox that isn't permitted. Checking if the server is online before
 // redirecting to it reduces the chance of the extension breaking Twitch.
+// XXX note to self: Can I override CORS via the extension to fix the redirect?
 cfg_if! {
     if #[cfg(feature = "true-status")] {
         async fn status() -> Response<Body> {
