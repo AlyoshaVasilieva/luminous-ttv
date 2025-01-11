@@ -36,9 +36,9 @@ async fn test_random_stream(state: &LState) -> Result<()> {
     let login = find_random_stream(state, &user_agent).await.context("find_random_stream")?;
     let mut query = HashMap::with_capacity(9);
     query.insert("player_backend", "mediaplayer");
-    query.insert("supported_codecs", "avc1");
+    query.insert("supported_codecs", "av1,h264");
     query.insert("cdm", "wv");
-    query.insert("player_version", "1.18.0");
+    query.insert("player_version", "1.36.0-rc.1");
     query.insert("allow_source", "true");
     query.insert("fast_bread", "true");
     query.insert("playlist_include_framerate", "true");

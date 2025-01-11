@@ -44,10 +44,10 @@ mod hello_config;
 mod status;
 
 const ID_PARAM: &str = "id";
-const VOD_ENDPOINT: &str = const_format::concatcp!("/vod/:", ID_PARAM);
-const LIVE_ENDPOINT: &str = const_format::concatcp!("/live/:", ID_PARAM);
+const VOD_ENDPOINT: &str = const_format::concatcp!("/vod/{", ID_PARAM, "}");
+const LIVE_ENDPOINT: &str = const_format::concatcp!("/live/{", ID_PARAM, "}");
 /// TTV-LOL emulation
-const LIVE_TTVLOL_ENDPOINT: &str = const_format::concatcp!("/playlist/:", ID_PARAM);
+const LIVE_TTVLOL_ENDPOINT: &str = const_format::concatcp!("/playlist/{", ID_PARAM, "}");
 // for Firefox only
 const STATUS_ENDPOINT: &str = "/stat/";
 const STATUS_TTVLOL_ENDPOINT: &str = "/ping"; // no trailing slash
@@ -326,7 +326,7 @@ impl ProcessData {
 
 // the User-Agent header is copied from the user if present by default
 // when using this locally it's basically pointless, but for a remote server handling many users
-// it should make it less detectable on Twitch's end (it'll look like more like a VPN endpoint or
+// it should make it less detectable on Twitch's end (it'll look like more like a VPN exit or
 // similar rather than an automated system)
 // UAs shouldn't be individually identifiable in any remotely normal browser
 
@@ -376,7 +376,7 @@ async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken)
         "reassignments_supported",    // true
         "supported_codecs",           // av1,h265,h264
         "cdm",                        // wv
-        "player_version",             // 1.28.0-rc.2
+        "player_version",             // 1.36.0-rc.1
         "fast_bread",                 // true; related to low latency mode
         "allow_source",               // true
         "allow_audio_only",           // true
@@ -422,7 +422,7 @@ async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken)
         // if the server is behind Cloudflare or similar, the playlist exposes the real IP, which
         // removes all the DDoS protection
         let user_ip = lazy_regex::regex!(r#"USER-IP="(([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3})""#);
-        return Ok(user_ip.replace(&m3u, r#"USER-IP="1.1.1.1""#).into_owned());
+        Ok(user_ip.replace(&m3u, r#"USER-IP="1.1.1.1""#).into_owned())
     }
     #[cfg(not(feature = "redact-ip"))]
     Ok(m3u)
