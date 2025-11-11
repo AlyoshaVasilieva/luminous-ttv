@@ -93,10 +93,10 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             binName: luminous-ttv
           - target: aarch64-unknown-linux-musl
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             binName: luminous-ttv
           - target: x86_64-apple-darwin
             os: macos-latest
@@ -127,8 +127,8 @@ jobs:
       - name: Move Binary
         id: mv
         run: mv "target/${{ matrix.target }}/release/${{ matrix.binName }}" .
-      - name: chmod binary #not working? ignored by zip action?
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+      - name: chmod binary
+        if: ${{ matrix.os == 'ubuntu-22.04' }}
         run: chmod +x "${{ matrix.binName }}"
       - name: Zip Files
         uses: vimtor/action-zip@v1
