@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: [ 'macos-latest', 'ubuntu-20.04', 'windows-2022' ]
+        version: [ 'macos-latest', 'ubuntu-22.04', 'windows-2022' ]
         cargo-cmd:
           - fmt --all -- --check
           - clippy --all-targets --all-features -- -D warnings
