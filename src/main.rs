@@ -22,7 +22,8 @@ use http::{
     header::{CACHE_CONTROL, USER_AGENT},
     HeaderValue, Response, StatusCode,
 };
-use rand::{distributions::Alphanumeric, Rng};
+use rand::distr::Alphanumeric;
+use rand::{rng, Rng};
 use reqwest::{ClientBuilder, Proxy};
 use reqwest_middleware::ClientWithMiddleware as Client;
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
@@ -53,10 +54,6 @@ const STATUS_ENDPOINT: &str = "/stat/";
 const STATUS_TTVLOL_ENDPOINT: &str = "/ping"; // no trailing slash
 const CONCURRENCY_LIMIT: usize = 64;
 
-#[cfg(feature = "true-status")]
-pub(crate) static PROXY: once_cell::sync::OnceCell<Option<Proxy>> =
-    once_cell::sync::OnceCell::new();
-
 #[derive(Parser, Debug)]
 #[clap(version, about)]
 pub(crate) struct Opts {
@@ -75,7 +72,7 @@ pub(crate) struct Opts {
     )]
     no_proxy: bool,
     /// Custom proxy to use, instead of Hola. Takes the form of 'scheme://host:port',
-    /// where scheme is one of: http/https/socks5/socks5h.
+    /// where scheme is one of: http/https/socks4/socks4a/socks5/socks5h.
     /// Must be in a country where Twitch doesn't serve ads for this system to work.
     #[cfg_attr(feature = "hola", arg(short, long))]
     #[cfg_attr(
@@ -149,7 +146,6 @@ async fn main() -> Result<()> {
     if opts.list_countries {
         return hello::list_countries().await;
     }
-    // TODO: SOCKS4 for reqwest
     let proxy = if let Some(proxy) = opts.proxy {
         let proxy = Proxy::all(proxy)?;
         Some(proxy)
@@ -158,14 +154,22 @@ async fn main() -> Result<()> {
     } else {
         hola_proxy(&opts).await?
     };
-    #[cfg(feature = "true-status")]
-    PROXY.set(proxy.clone()).unwrap();
-    let client = create_client(proxy)?;
+    let client = create_client(proxy.clone())?;
+
+    #[cfg(not(feature = "true-status"))]
     let state = LState {
         client,
         twitch_client_id: Box::leak(opts.twitch_client_id.into_boxed_str()),
         user_agent: opts.user_agent,
     };
+    #[cfg(feature = "true-status")]
+    let state = LState {
+        client,
+        twitch_client_id: Box::leak(opts.twitch_client_id.into_boxed_str()),
+        user_agent: opts.user_agent,
+        proxy,
+    };
+    // TODO: Find some better way to do this
 
     #[allow(unused_mut)] // feature-gated
     let mut router = Router::new()
@@ -224,6 +228,8 @@ struct LState {
     twitch_client_id: &'static str,
     // changing CID during operation isn't supported, so just leak it as a pointless optimization
     user_agent: Option<HeaderValue>,
+    #[cfg(feature = "true-status")]
+    proxy: Option<Proxy>,
 }
 
 #[cfg(feature = "hola")]
@@ -397,7 +403,7 @@ async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken)
     );
     // add our fake ID
     url.query_pairs_mut()
-        .append_pair("p", &common::get_rng().gen_range(0..=9_999_999).to_string())
+        .append_pair("p", &rng().random_range(0..=9_999_999).to_string())
         .append_pair("play_session_id", &generate_id().into_ascii_lowercase())
         .append_pair("token", &token.value)
         .append_pair("sig", &token.signature)
@@ -436,7 +442,7 @@ async fn get_token(state: &LState, pd: &ProcessData) -> Result<AccessTokenRespon
         "extensions": {
             "persistedQuery": {
                 "version": 1,
-                "sha256Hash": "0828119ded1c13477966434e15800ff57ddacf13ba1911c129dc2200705b0712",
+                "sha256Hash": "ed230aa1e33e07eebb8928504583da78a5173989fadfb1ac94be06a04f3cdbe9",
             },
         },
         "variables": {
@@ -445,9 +451,9 @@ async fn get_token(state: &LState, pd: &ProcessData) -> Result<AccessTokenRespon
             "isVod": matches!(sid, StreamID::VOD(_)),
             "vodID": if matches!(sid, StreamID::VOD(_)) { sid.data() } else { "" },
             "playerType": "site", // "embed" may also be valid
+            "platform": "web",
         },
     });
-    // Newer hash: 3093517e37e4f4cb48906155bcd894150aef92617939236d2508f3375ab732ce (same vars)
 
     // XXX: I've seen a different method of doing this that involves X-Device-Id (frontpage only?)
     //  2022-04-16: No longer seeing it
@@ -535,8 +541,7 @@ impl str {
 /// Generate an ID suitable for use both as a Device-ID and a play_session_id.
 /// The latter must be lowercased, as this function returns a mixed-case string.
 fn generate_id() -> String {
-    let mut rng = common::get_rng();
-    std::iter::repeat(()).map(|_| rng.sample(Alphanumeric)).map(char::from).take(32).collect()
+    std::iter::repeat(()).map(|_| rng().sample(Alphanumeric)).map(char::from).take(32).collect()
 }
 
 #[derive(Clone, Debug, Deserialize)]

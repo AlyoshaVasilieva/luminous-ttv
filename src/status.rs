@@ -6,6 +6,7 @@ use axum::{extract::State, http::StatusCode};
 use axum_extra::headers::UserAgent;
 use http::header::USER_AGENT;
 use rand::prelude::IteratorRandom;
+use rand::rng;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -15,7 +16,7 @@ pub(crate) static STATUS: AtomicBool = AtomicBool::new(true);
 
 /// Point something like UptimeRobot/Caddy at this endpoint, it needs to be routinely hit
 pub(crate) async fn deep_status(State(mut state): State<LState>) -> StatusCode {
-    let client = create_client(crate::PROXY.get().unwrap().clone()).unwrap();
+    let client = create_client(state.proxy.clone()).unwrap();
     state.client = client;
     // purposefully not reusing client
     match test_random_stream(&state).await {
@@ -38,12 +39,16 @@ async fn test_random_stream(state: &LState) -> Result<()> {
     query.insert("player_backend", "mediaplayer");
     query.insert("supported_codecs", "av1,h264");
     query.insert("cdm", "wv");
-    query.insert("player_version", "1.36.0-rc.1");
+    query.insert("player_version", "1.46.0-rc.3");
     query.insert("allow_source", "true");
     query.insert("fast_bread", "true");
     query.insert("playlist_include_framerate", "true");
     query.insert("reassignments_supported", "true");
     query.insert("transcode_mode", "cbr_v1");
+    query.insert("enable_score", "true");
+    query.insert("multigroup_video", "false");
+    query.insert("platform", "web");
+    query.insert("include_unavailable", "false");
     let pd = ProcessData {
         sid: StreamID::Live(login),
         query: query.into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect(),
@@ -67,7 +72,7 @@ async fn find_random_stream(state: &LState, ua: &UserAgent) -> Result<String> {
         "extensions": {
             "persistedQuery": {
                 "version": 1,
-                "sha256Hash": "1fc22cf18e3afe09cb56e10181ff25073818b80f07dfca546c8aa3bc1ad15f76"
+                "sha256Hash": "14fee5369fafaecbb6203b941c4b1bdf73f9782274f965f618f28e34f6bb5537"
             }
         }
     });
@@ -90,7 +95,7 @@ async fn find_random_stream(state: &LState, ua: &UserAgent) -> Result<String> {
         .filter_map(|s| s.stream.as_ref())
         .filter(|s| s.stream_type.eq_ignore_ascii_case("live"))
         .filter(|s| !s.broadcaster.login.starts_with("prime"))
-        .choose(&mut common::get_rng())
+        .choose(&mut rng())
         .ok_or_else(|| anyhow!("no streams available"))?;
     // streams named "prime*" are removed because they're Prime Video
     Ok(stream.broadcaster.login.clone())

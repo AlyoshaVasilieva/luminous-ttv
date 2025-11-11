@@ -32,7 +32,7 @@ use anyhow::{anyhow, Result};
 use const_format::concatcp;
 use isocountry::CountryCode;
 use once_cell::sync::Lazy;
-use rand::Rng;
+use rand::{rng, Rng};
 use reqwest::{Client, ClientBuilder};
 use serde::{Deserialize, Serialize};
 #[allow(unused)]
@@ -173,12 +173,11 @@ pub(crate) async fn get_tunnels(
     proxy_type: ProxyType,
     limit: u32,
 ) -> Result<TunnelResponse> {
-    let mut rng = common::get_rng();
     let mut url = Url::parse(ZGETTUNNELS_URL).expect("zgettunnels");
     url.query_pairs_mut()
         .append_pair("country", &proxy_type.to_param(country))
         .append_pair("limit", &limit.to_string())
-        .append_pair("ping_id", &rng.gen::<f64>().to_string())
+        .append_pair("ping_id", &rng().random::<f64>().to_string())
         .append_pair("ext_ver", EXT_VER)
         .append_pair(EXT_BROWSER.0, EXT_BROWSER.1)
         .append_pair(PRODUCT.0, PRODUCT.1)

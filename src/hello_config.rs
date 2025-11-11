@@ -2,7 +2,7 @@
 //! move more code into this file.
 
 use anyhow::{bail, Context, Result};
-use rand::prelude::SliceRandom;
+use rand::{prelude::IndexedRandom, rng};
 use reqwest::Proxy;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use hello::ProxyType;
 
-use crate::{common, hello, hello::BgInitResponse, Opts};
+use crate::{hello, hello::BgInitResponse, Opts};
 
 const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 
@@ -44,7 +44,7 @@ pub(crate) async fn setup_hola(opts: &Opts) -> Result<Proxy> {
     debug!("login: {}", login);
     debug!("password: {}", password);
     let (hostname, ip) =
-        tunnels.ip_list.choose(&mut common::get_rng()).expect("no tunnels found in hola response");
+        tunnels.ip_list.choose(&mut rng()).expect("no tunnels found in hola response");
     let port = proxy_type.get_port(&tunnels.port);
     let proxy = if !hostname.is_empty() {
         format!("https://{hostname}:{port}")
