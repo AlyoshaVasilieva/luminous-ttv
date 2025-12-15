@@ -1,6 +1,6 @@
 [package]
 name = "luminous-ttv"
-version = "0.5.10"
+version = "0.5.12"
 authors = ["Malloc Voidstar <1284317+AlyoshaVasilieva@users.noreply.github.com>"]
 edition = "2021"
 repository = "https://github.com/AlyoshaVasilieva/luminous-ttv"
@@ -47,6 +47,7 @@ tracing-subscriber = "0.3"
 version = "0.12.4"
 default-features = false
 features = ["rustls-tls", "http2", "gzip", "brotli", "socks", "json"]
+# Twitch serves M3Us gzipped, GQL with brotli
 
 [target.'cfg(windows)'.dependencies]
 nu-ansi-term = "0.50"
