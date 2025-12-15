@@ -88,7 +88,7 @@ async fn find_random_stream(state: &LState, ua: &UserAgent) -> Result<String> {
         .error_for_status()?
         .json()
         .await?;
-    Ok(get_broadcaster_login_from_streams(res)?)
+    get_broadcaster_login_from_streams(res)
 }
 
 fn get_broadcaster_login_from_streams(gqlr: GQLResponse) -> Result<String> {
