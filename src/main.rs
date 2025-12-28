@@ -427,8 +427,8 @@ async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken)
     {
         // if the server is behind Cloudflare or similar, the playlist exposes the real IP, which
         // removes all the DDoS protection
-        let user_ip = lazy_regex::regex!(r#"USER-IP="(([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3})""#);
-        Ok(user_ip.replace(&m3u, r#"USER-IP="1.1.1.1""#).into_owned())
+        let user_ip = regex::Regex::new(r#"USER-IP="[^"]+"#).unwrap();
+        Ok(user_ip.replace(&m3u, r#"USER-IP="1.1.1.1"#).into_owned())
     }
     #[cfg(not(feature = "redact-ip"))]
     Ok(m3u)
