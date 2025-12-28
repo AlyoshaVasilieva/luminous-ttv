@@ -19,7 +19,6 @@ rand = "0.9.1"
 const_format = "0.2.18"
 url = "2.2.2"
 extend = "1.1.2"
-lazy-regex = { version = "3.0.2", default-features = false, features = ["std", "perf"], optional = true }
 cfg-if = "1.0"
 phf = { version = "0.13.1", features = ["macros"] }
 reqwest-middleware = { version = "0.4", features = ["json"] }
@@ -42,6 +41,7 @@ http = "1.1"
 
 tracing = { version = "0.1", features = ["release_max_level_debug"] } # disable trace in releases
 tracing-subscriber = "0.3"
+regex = { version = "1.12.2", optional = true }
 
 [dependencies.reqwest]
 version = "0.12.4"
@@ -60,7 +60,7 @@ gzip = ["tower-http/compression-gzip"] # compress responses
 # Investigate shared dictionaries. Not sure if they're usable yet, but they'd save ~30% per M3U.
 tls = ["axum-server/tls-rustls"] # support listening as HTTPS, without needing a reverse proxy
 true-status = [] # extended status endpoint that simulates a user's request flow
-redact-ip = ["lazy-regex"] # try to hide server IP in responses (no guarantees)
+redact-ip = ["dep:regex"] # try to hide server IP in responses (no guarantees)
 
 [profile.release]
 codegen-units = 1
