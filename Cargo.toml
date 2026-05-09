@@ -1,7 +1,9 @@
 [package]
 name = "luminous-ttv"
 version = "0.5.12"
-authors = ["Malloc Voidstar <1284317+AlyoshaVasilieva@users.noreply.github.com>"]
+authors = [
+	"Malloc Voidstar <1284317+AlyoshaVasilieva@users.noreply.github.com>",
+]
 edition = "2021"
 repository = "https://github.com/AlyoshaVasilieva/luminous-ttv"
 license = "GPL-3.0-only"
@@ -19,7 +21,7 @@ rand = "0.9.1"
 const_format = "0.2.18"
 url = "2.2.2"
 extend = "1.1.2"
-lazy-regex = { version = "3.0.2", default-features = false, features = ["std", "perf"], optional = true }
+regex = { version = "1.12.2", optional = true }
 cfg-if = "1.0"
 phf = { version = "0.13.1", features = ["macros"] }
 reqwest-middleware = { version = "0.4", features = ["json"] }
@@ -33,14 +35,23 @@ serde-tuple-vec-map = { version = "1.0", optional = true }
 
 # Axum and related deps
 axum = { version = "0.8.1", features = ["http2", "json"] }
-axum-extra = { version = "0.12.1", default-features = false, features = ["typed-header"] }
+axum-extra = { version = "0.12.1", default-features = false, features = [
+	"typed-header",
+] }
 axum-server = "0.8"
 tokio = { version = "1.13", features = ["macros", "rt-multi-thread"] }
-tower = { version = "0.5.1", features = ["limit", "load-shed", "timeout", "util"] }
+tower = { version = "0.5.1", features = [
+	"limit",
+	"load-shed",
+	"timeout",
+	"util",
+] }
 tower-http = { version = "0.6", features = ["cors", "set-header"] }
 http = "1.1"
 
-tracing = { version = "0.1", features = ["release_max_level_debug"] } # disable trace in releases
+tracing = { version = "0.1", features = [
+	"release_max_level_debug",
+] } # disable trace in releases
 tracing-subscriber = "0.3"
 
 [dependencies.reqwest]
@@ -55,12 +66,14 @@ nu-ansi-term = "0.50"
 [features]
 default = ["hola"]
 hola = ["confy", "isocountry", "serde-tuple-vec-map", "uuid"]
-gzip = ["tower-http/compression-gzip"] # compress responses
+gzip = ["tower-http/compression-gzip"]                        # compress responses
 # Note: zstd seems to have browser support now (use level 1 or 2).
 # Investigate shared dictionaries. Not sure if they're usable yet, but they'd save ~30% per M3U.
-tls = ["axum-server/tls-rustls"] # support listening as HTTPS, without needing a reverse proxy
+tls = [
+	"axum-server/tls-rustls",
+] # support listening as HTTPS, without needing a reverse proxy
 true-status = [] # extended status endpoint that simulates a user's request flow
-redact-ip = ["lazy-regex"] # try to hide server IP in responses (no guarantees)
+redact-ip = ["dep:regex"] # try to hide server IP in responses (no guarantees)
 
 [profile.release]
 codegen-units = 1
@@ -69,7 +82,7 @@ lto = true
 # for `cargo deb`
 [package.metadata.deb]
 license-file = ["LICENSE-GPL.txt", "0"]
-maintainer-scripts = "debian/maint-scripts" # empty, see cargo-deb docs
+maintainer-scripts = "debian/maint-scripts"                                   # empty, see cargo-deb docs
 systemd-units = { enable = false, unit-scripts = "debian" }
 default-features = false
 features = ["gzip", "tls", "true-status", "redact-ip", "reqwest/hickory-dns"]
