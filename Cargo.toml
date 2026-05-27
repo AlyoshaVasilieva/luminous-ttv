@@ -54,7 +54,7 @@ nu-ansi-term = "0.50"
 
 [features]
 default = ["hola"]
-hola = ["confy", "isocountry", "serde-tuple-vec-map", "uuid"]
+hola = ["confy", "isocountry", "serde-tuple-vec-map", "uuid", "reqwest/form"]
 gzip = ["tower-http/compression-gzip"] # compress responses
 # Note: zstd seems to have browser support now (use level 1 or 2).
 # Investigate shared dictionaries. Not sure if they're usable yet, but they'd save ~30% per M3U.
