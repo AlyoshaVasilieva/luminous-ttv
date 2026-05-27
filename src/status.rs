@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use axum::{extract::State, http::StatusCode};
 use axum_extra::headers::UserAgent;
 use http::header::USER_AGENT;
@@ -10,7 +10,7 @@ use rand::rng;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{common, create_client, generate_id, AppError, LState, ProcessData, StreamID};
+use crate::{AppError, LState, ProcessData, StreamID, common, create_client, generate_id};
 
 pub(crate) static STATUS: AtomicBool = AtomicBool::new(true);
 
@@ -137,8 +137,8 @@ struct Broadcaster {
 
 #[cfg(test)]
 mod test {
-    use crate::status::get_broadcaster_login_from_streams;
     use crate::status::GQLResponse;
+    use crate::status::get_broadcaster_login_from_streams;
     #[test]
     fn getting_broadcaster_works() {
         // XXX: update this every once in a while

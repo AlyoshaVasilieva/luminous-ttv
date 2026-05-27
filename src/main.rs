@@ -7,33 +7,33 @@ use std::time::Duration;
 
 use anyhow::Result;
 use axum::{
+    BoxError, Json, Router,
     body::Body,
     error_handling::HandleErrorLayer,
     extract::{Path, Query, State},
     response::IntoResponse,
     routing::get,
-    BoxError, Json, Router,
 };
-use axum_extra::{headers::UserAgent, TypedHeader};
+use axum_extra::{TypedHeader, headers::UserAgent};
 use cfg_if::cfg_if;
 use clap::Parser;
 use extend::ext;
 use http::{
-    header::{CACHE_CONTROL, USER_AGENT},
     HeaderValue, Response, StatusCode,
+    header::{CACHE_CONTROL, USER_AGENT},
 };
 use rand::distr::Alphanumeric;
-use rand::{rng, RngExt};
+use rand::{RngExt, rng};
 use reqwest::{ClientBuilder, Proxy};
 use reqwest_middleware::ClientWithMiddleware as Client;
-use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
+use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tower::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 #[allow(unused)]
-use tracing::{debug, error, info, warn, Level};
+use tracing::{Level, debug, error, info, warn};
 use url::Url;
 
 mod common;
@@ -194,8 +194,8 @@ async fn main() -> Result<()> {
             .timeout(Duration::from_secs(40))
             .into_inner(),
     ); // rudimentary global rate-limiting, plus failsafe timeout
-       // TODO: Investigate IP-based rate-limiting (tower_governor). Remember to have configurable
-       //  code for trusting the reverse proxy, etc. Remember to limit by /64 for v6.
+    // TODO: Investigate IP-based rate-limiting (tower_governor). Remember to have configurable
+    //  code for trusting the reverse proxy, etc. Remember to limit by /64 for v6.
 
     // NOTE! Concurrency limit layer must be below (in layer terms, or before in code terms)
     // status endpoints! Otherwise, the tiny status endpoint uses up all the rate-limit available.
@@ -361,11 +361,11 @@ async fn process_vod(
         Ok(pd) => pd,
         Err(e) => return e.into_response(),
     };
-    if let StreamID::VOD(s) = &pd.sid {
-        if s.parse::<u64>().is_err() {
-            return StatusCode::BAD_REQUEST.into_response();
-        } // can't validate up front (which is cleaner) due to TTV-LOL emulation
-    }
+    if let StreamID::VOD(s) = &pd.sid
+        && s.parse::<u64>().is_err()
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    } // can't validate up front (which is cleaner) due to TTV-LOL emulation
     process(pd, &state).await.into_response()
 }
 
@@ -498,13 +498,13 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response<Body> {
         let (status, error_message) = match self {
             AppError::Anyhow(mut e) => {
-                if let Some(e) = e.downcast_mut::<reqwest::Error>() {
-                    if let Some(url) = e.url_mut() {
-                        // vaporize query string since the token has the IP that twitch sees
-                        // TODO: for a fix which preserves more info, copy the query string
-                        //  except for p, play_session_id, token, sig, acmb
-                        url.set_query(None);
-                    }
+                if let Some(e) = e.downcast_mut::<reqwest::Error>()
+                    && let Some(url) = e.url_mut()
+                {
+                    // vaporize query string since the token has the IP that twitch sees
+                    // TODO: for a fix which preserves more info, copy the query string
+                    //  except for p, play_session_id, token, sig, acmb
+                    url.set_query(None);
                 };
                 let message = format!("{e:?}");
                 let status = e
@@ -623,7 +623,8 @@ mod tests {
         assert!(redact_ip(input).contains("USER-IP=\"1.1.1.1\""));
         let input = r#"TRANSCODEMODE="cbr_v1",USER-IP="::1",SERVING-ID="a""#.to_owned();
         assert!(redact_ip(input).contains("USER-IP=\"1.1.1.1\""));
-        let input = r#"TRANSCODEMODE="cbr_v1",USER-IP="2001:db8::8a2e:370:7334",SERVING-ID="a""#.to_owned();
+        let input =
+            r#"TRANSCODEMODE="cbr_v1",USER-IP="2001:db8::8a2e:370:7334",SERVING-ID="a""#.to_owned();
         assert!(redact_ip(input).contains("USER-IP=\"1.1.1.1\""));
     }
 }

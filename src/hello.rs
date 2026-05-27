@@ -28,11 +28,11 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use const_format::concatcp;
 use isocountry::CountryCode;
 use once_cell::sync::Lazy;
-use rand::{rng, RngExt};
+use rand::{RngExt, rng};
 use reqwest::{Client, ClientBuilder};
 use serde::{Deserialize, Serialize};
 #[allow(unused)]

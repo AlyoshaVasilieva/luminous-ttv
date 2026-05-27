@@ -1,7 +1,7 @@
 //! Stores some of the Hola code to make conditional compilation cleaner. I should probably
 //! move more code into this file.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use rand::{prelude::IndexedRandom, rng};
 use reqwest::Proxy;
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use hello::ProxyType;
 
-use crate::{hello, hello::BgInitResponse, Opts};
+use crate::{Opts, hello, hello::BgInitResponse};
 
 const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 
