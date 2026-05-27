@@ -26,7 +26,11 @@ pub(crate) async fn setup_hola(opts: &Opts) -> Result<Proxy> {
         "Setting up Hola proxy. Regen: {} / Discard: {} / Country: {}",
         opts.regen_creds, opts.discard_creds, opts.country
     );
-    let mut config: Config = confy::load(CRATE_NAME, None)?;
+    let mut config: Config = if let Some(path) = &opts.config_file {
+        confy::load_path(path)?
+    } else {
+        confy::load(CRATE_NAME, None)?
+    };
     let uuid = if !opts.regen_creds { config.uuid } else { None };
     let (bg, uuid) = hello::background_init(uuid).await.context("Hola init")?;
     config.uuid = Some(uuid);
@@ -56,7 +60,11 @@ pub(crate) async fn setup_hola(opts: &Opts) -> Result<Proxy> {
             "Saving Hola credentials to {}",
             confy::get_configuration_file_path(CRATE_NAME, None)?.display()
         );
-        confy::store(CRATE_NAME, None, &config)?;
+        if let Some(path) = &opts.config_file {
+            confy::store_path(path, &config)?;
+        } else {
+            confy::store(CRATE_NAME, None, &config)?;
+        }
     }
     Ok(Proxy::all(proxy)?.basic_auth(&login, &password))
 }

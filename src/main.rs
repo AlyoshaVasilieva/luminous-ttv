@@ -1,7 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-#[cfg(feature = "tls")]
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -119,6 +118,9 @@ pub(crate) struct Opts {
     /// copy-or-default system.
     #[arg(short, long, env = "LUMINOUS_TTV_USER_AGENT")]
     user_agent: Option<HeaderValue>,
+    /// Path to configuration file. Uses system default if left unspecified.
+    #[arg(long, env = "LUMINOUS_TTV_CONFIG_FILE")]
+    config_file: Option<PathBuf>,
 }
 
 // The "kimne..." client ID is shown in the clear if you load the main page.
