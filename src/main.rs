@@ -423,15 +423,19 @@ async fn get_m3u8(client: &Client, pd: &ProcessData, token: PlaybackAccessToken)
         info!("Twitch states that the proxy is in {}", country);
     }
 
+    Ok(redact_ip(m3u))
+}
+
+fn redact_ip(m3u: String) -> String {
     #[cfg(feature = "redact-ip")]
     {
         // if the server is behind Cloudflare or similar, the playlist exposes the real IP, which
         // removes all the DDoS protection
-        let user_ip = lazy_regex::regex!(r#"USER-IP="(([[:digit:]]{1,3}\.){3}[[:digit:]]{1,3})""#);
-        Ok(user_ip.replace(&m3u, r#"USER-IP="1.1.1.1""#).into_owned())
+        let user_ip = lazy_regex::regex!(r#"USER-IP="([^"]+)""#);
+        user_ip.replace(&m3u, r#"USER-IP="1.1.1.1""#).into_owned()
     }
     #[cfg(not(feature = "redact-ip"))]
-    Ok(m3u)
+    m3u
 }
 
 /// Get an access token for the given stream.
@@ -604,11 +608,22 @@ async fn handle_error(error: BoxError) -> impl IntoResponse {
 
 #[cfg(test)]
 mod tests {
-    use crate::strExt;
+    use crate::{redact_ip, strExt};
 
     #[test]
     fn substring() {
         let input = r#"se",USER-COUNTRY="RU",MANI"#;
         assert_eq!(input.substring_between("USER-COUNTRY=\"", "\""), Some("RU"));
+    }
+
+    #[cfg(feature = "redact-ip")]
+    #[test]
+    fn redact_ips() {
+        let input = r#"TRANSCODEMODE="cbr_v1",USER-IP="127.0.0.1",SERVING-ID="a""#.to_owned();
+        assert!(redact_ip(input).contains("USER-IP=\"1.1.1.1\""));
+        let input = r#"TRANSCODEMODE="cbr_v1",USER-IP="::1",SERVING-ID="a""#.to_owned();
+        assert!(redact_ip(input).contains("USER-IP=\"1.1.1.1\""));
+        let input = r#"TRANSCODEMODE="cbr_v1",USER-IP="2001:db8::8a2e:370:7334",SERVING-ID="a""#.to_owned();
+        assert!(redact_ip(input).contains("USER-IP=\"1.1.1.1\""));
     }
 }
