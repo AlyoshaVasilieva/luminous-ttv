@@ -23,7 +23,7 @@ use http::{
     HeaderValue, Response, StatusCode,
 };
 use rand::distr::Alphanumeric;
-use rand::{rng, Rng};
+use rand::{rng, RngExt};
 use reqwest::{ClientBuilder, Proxy};
 use reqwest_middleware::ClientWithMiddleware as Client;
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};

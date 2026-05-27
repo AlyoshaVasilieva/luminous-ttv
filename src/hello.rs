@@ -32,7 +32,7 @@ use anyhow::{anyhow, Result};
 use const_format::concatcp;
 use isocountry::CountryCode;
 use once_cell::sync::Lazy;
-use rand::{rng, Rng};
+use rand::{rng, RngExt};
 use reqwest::{Client, ClientBuilder};
 use serde::{Deserialize, Serialize};
 #[allow(unused)]

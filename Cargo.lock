@@ -1266,7 +1266,7 @@ dependencies = [
  "nu-ansi-term",
  "once_cell",
  "phf",
- "rand 0.9.4",
+ "rand 0.10.1",
  "reqwest",
  "reqwest-middleware",
  "reqwest-retry",
